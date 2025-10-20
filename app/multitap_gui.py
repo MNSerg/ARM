@@ -192,6 +192,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.recorder: Optional[MacroRecorder] = None
         self._reading_tap: Optional[int] = None
         self._prog_exit_pending: bool = False
+        self._prog_buffer: Optional[List[ActionItem]] = None
+        self._prog_source_tab: Optional[int] = None
 
         # Restore settings
         self._load_settings()
@@ -618,7 +620,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         # Всегда подтверждаем вход в режим программирования, чтобы LED загорелся
         self.serial.send_line("PROG_ACK")
         if self.chk_autorun.isChecked():
-            # Auto start recording on current tab
+            # Prepare programming buffer and start recording from current tab
+            self._prog_buffer = []
+            self._prog_source_tab = self.current_tap
             self._start_record(self.current_tap)
             # Mark that next TAP decides the target tap on exit
             self._prog_exit_pending = True
@@ -627,11 +631,22 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.console.log("Выход из режима программирования запрошен")
         self.serial.send_line("PROG_EXIT_ACK")
         if self.recorder is not None:
-            # Stop and auto-send macro to the tap last tapped during programming (or current tab fallback)
+            # Stop recording
             self._stop_record(self.current_tap)
             target_tap = self.current_tap
-            self._write_macro(target_tap)
+            # If we have a programming buffer, write it to the target tap and copy to GUI list
+            if self._prog_buffer is not None and len(self._prog_buffer) > 0:
+                # Copy buffer into target tap list for UI consistency
+                self.tap_configs[target_tap].actions = [ActionItem(a.action_type, a.mods, a.key, a.ms) for a in self._prog_buffer]
+                self._refresh_actions_list(target_tap)
+                self._write_macro_actions(target_tap, self._prog_buffer)
+            else:
+                # Fallback: write current tap actions
+                self._write_macro(target_tap)
+        # Reset programming state
         self._prog_exit_pending = False
+        self._prog_buffer = None
+        self._prog_source_tab = None
 
     # --------------------- Mode and actions ---------------------
     def _on_mode_changed(self, tap: int, macro_checked: bool) -> None:
@@ -656,7 +671,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
         def on_action(action: Dict) -> None:
             if action['type'] == 'delay':
-                cfg.actions.append(ActionItem('delay', ms=int(action['ms'])))
+                delay_action = ActionItem('delay', ms=int(action['ms']))
+                cfg.actions.append(delay_action)
+                if self._prog_buffer is not None:
+                    self._prog_buffer.append(ActionItem('delay', ms=delay_action.ms))
             elif action['type'] == 'key':
                 # Enforce key tokens
                 key = action['key']
@@ -664,7 +682,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                     return
                 if cfg.combos_count() >= MAX_COMBOS:
                     return
-                cfg.actions.append(ActionItem('key', mods=int(action['mods']), key=key))
+                key_action = ActionItem('key', mods=int(action['mods']), key=key)
+                cfg.actions.append(key_action)
+                if self._prog_buffer is not None:
+                    self._prog_buffer.append(ActionItem('key', mods=key_action.mods, key=key_action.key))
             self._refresh_actions_list(tap)
 
         rec.on_action = on_action
@@ -789,6 +810,20 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             return
         self.serial.send_line(f"WRITE_MACRO_BEGIN:{tap}")
         for a in self.tap_configs[tap].actions:
+            self.serial.send_line(a.to_serial_line())
+        self.serial.send_line("WRITE_MACRO_END")
+
+    def _write_macro_actions(self, tap: int, actions: List[ActionItem]) -> None:
+        # Enforce MAX_COMBOS
+        combos = [a for a in actions if a.action_type == 'key']
+        if len(combos) > MAX_COMBOS:
+            self.console.log(f"Ошибка: более {MAX_COMBOS} комбинаций")
+            return
+        self.serial.send_line(f"WRITE_MACRO_BEGIN:{tap}")
+        for a in actions:
+            # Validate token before sending to device
+            if a.action_type == 'key' and a.key not in KEY_TOKENS:
+                continue
             self.serial.send_line(a.to_serial_line())
         self.serial.send_line("WRITE_MACRO_END")
 
