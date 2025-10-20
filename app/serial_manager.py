@@ -155,6 +155,13 @@ class SerialManager:
         """List available port device names (e.g., COM3, /dev/ttyACM0)."""
         return [p.device for p in list_ports.comports()]
 
+    def list_ports_with_desc(self) -> List[tuple[str, str]]:
+        """List available ports as (device, description)."""
+        result: List[tuple[str, str]] = []
+        for p in list_ports.comports():
+            result.append((p.device, p.description or ""))
+        return result
+
     def try_connect_port(self, port_name: str) -> bool:
         """Attempt connection to the given port.
 

@@ -146,7 +146,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(600, 700)
+        self.resize(520, 560)
         self._apply_dark_theme()
 
         self.serial = SerialManager()
@@ -203,19 +203,46 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _apply_dark_theme(self) -> None:
         app = QtWidgets.QApplication.instance()
         palette = QtGui.QPalette()
-        palette.setColor(QtGui.QPalette.Window, QtGui.QColor(45, 45, 45))
+        base_bg = QtGui.QColor(40, 40, 40)
+        panel_bg = QtGui.QColor(30, 30, 30)
+        btn_bg = QtGui.QColor(55, 55, 55)
+        text_color = QtCore.Qt.white
+        highlight = QtGui.QColor(45, 140, 240)
+
+        palette.setColor(QtGui.QPalette.Window, base_bg)
         palette.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
-        palette.setColor(QtGui.QPalette.Base, QtGui.QColor(30, 30, 30))
-        palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(45, 45, 45))
+        palette.setColor(QtGui.QPalette.Base, panel_bg)
+        palette.setColor(QtGui.QPalette.AlternateBase, base_bg)
         palette.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
         palette.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
-        palette.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
-        palette.setColor(QtGui.QPalette.Button, QtGui.QColor(60, 60, 60))
+        palette.setColor(QtGui.QPalette.Text, text_color)
+        palette.setColor(QtGui.QPalette.Button, btn_bg)
         palette.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
         palette.setColor(QtGui.QPalette.BrightText, QtCore.Qt.red)
-        palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(45, 140, 240))
+        palette.setColor(QtGui.QPalette.Highlight, highlight)
         palette.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
         app.setPalette(palette)
+
+        # StyleSheet to enforce dark tabs, group boxes, and list
+        app.setStyleSheet(
+            """
+            QTabWidget::pane { border: 1px solid #333; background: #202020; }
+            QTabBar::tab { background: #2d2d2d; color: #ddd; padding: 6px 12px; }
+            QTabBar::tab:selected { background: #3a3a3a; }
+            QGroupBox { border: 1px solid #333; margin-top: 8px; background: #1e1e1e; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
+            QListWidget { background: #1e1e1e; color: #eee; }
+            QPlainTextEdit { background: #111; color: #ddd; }
+            QPushButton { background-color: #383838; color: #eee; border: 1px solid #444; padding: 6px 10px; }
+            QPushButton:hover { background-color: #444; }
+            QLineEdit { background: #242424; color: #eee; border: 1px solid #444; }
+            QComboBox { background: #242424; color: #eee; border: 1px solid #444; }
+            QMenu { background: #2b2b2b; color: #eee; }
+            QMenu::item:selected { background: #3a3a3a; }
+            QCheckBox { color: #eee; }
+            QLabel { color: #eee; }
+            """
+        )
 
         font = QtGui.QFont()
         font.setPointSize(10)
@@ -271,7 +298,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
         # Macro controls
         macro_group = QtWidgets.QGroupBox("Последовательность действий:")
-        v.addWidget(macro_group, 1)
+        v.addWidget(macro_group, 2)
         mv = QtWidgets.QVBoxLayout(macro_group)
 
         self.lst_actions = getattr(self, 'lst_actions', None)
@@ -280,6 +307,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         lst = QtWidgets.QListWidget()
         self.lst_actions[tap] = lst
         mv.addWidget(lst, 1)
+        # Context menu for actions list
+        lst.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        lst.customContextMenuRequested.connect(lambda pos, t=tap: self._show_actions_context_menu(t, pos))
 
         rec_h = QtWidgets.QHBoxLayout()
         mv.addLayout(rec_h)
@@ -307,6 +337,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.cmb_delay_mode[tap] = cmb_delay
         delay_h.addWidget(cmb_delay)
 
+        # Collapsible edit menu (three-dots)
         edit_h = QtWidgets.QHBoxLayout()
         mv.addLayout(edit_h)
         self.btn_read = getattr(self, 'btn_read', None)
@@ -346,8 +377,24 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.btn_down[tap] = btn_down
         self.btn_del[tap] = btn_del
         self.btn_add_delay[tap] = btn_add_delay
-        for b in [btn_read, btn_write, btn_clear, btn_edit, btn_add_key, btn_up, btn_down, btn_del, btn_add_delay]:
-            edit_h.addWidget(b)
+        # Place heavy edit actions into a menu button to save space
+        menu_btn = QtWidgets.QToolButton()
+        menu_btn.setText("...")
+        menu_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        menu = QtWidgets.QMenu(menu_btn)
+        menu.addAction("Редактировать", lambda: btn_edit.click())
+        menu.addAction("Добавить клавишу", lambda: btn_add_key.click())
+        menu.addAction("Вверх", lambda: btn_up.click())
+        menu.addAction("Вниз", lambda: btn_down.click())
+        menu.addAction("Удалить действие", lambda: btn_del.click())
+        menu.addAction("Добавить задержку", lambda: btn_add_delay.click())
+        menu_btn.setMenu(menu)
+
+        # Keep primary actions visible
+        edit_h.addWidget(btn_read)
+        edit_h.addWidget(btn_write)
+        edit_h.addWidget(btn_clear)
+        edit_h.addWidget(menu_btn)
 
         # App controls
         app_group = QtWidgets.QGroupBox("Приложение для запуска")
@@ -394,6 +441,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         btn.clicked.connect(lambda: self.console.setPlainText(""))
         h.addWidget(btn)
         self._vbox.addWidget(self.console, 1)
+        self.console.setMaximumHeight(140)
 
     def _build_tray(self) -> None:
         self.tray = QtWidgets.QSystemTrayIcon(self)
@@ -427,11 +475,21 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     # --------------------- Event handlers ---------------------
     def _refresh_ports(self) -> None:
         self.cb_ports.clear()
-        for p in self.serial.list_ports():
-            self.cb_ports.addItem(p)
+        # Fill with device (description)
+        preferred_index = -1
+        i = 0
+        for dev, desc in self.serial.list_ports_with_desc():
+            label = f"{dev} ({desc})" if desc else dev
+            self.cb_ports.addItem(label, dev)
+            if 'arduino micro' in (desc or '').lower():
+                preferred_index = i
+            i += 1
+        if preferred_index >= 0:
+            self.cb_ports.setCurrentIndex(preferred_index)
 
     def _connect_selected(self) -> None:
-        port = self.cb_ports.currentText()
+        # Current data holds the actual device path
+        port = self.cb_ports.currentData()
         if port:
             if self.serial.try_connect_port(port):
                 self.btn_connect.setText("Отключить")
@@ -719,6 +777,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             else:
                 self.tap_configs[tap].actions.insert(idx + 1, new_action)
             self._refresh_actions_list(tap)
+
+    def _show_actions_context_menu(self, tap: int, pos: QtCore.QPoint) -> None:
+        lst = self.lst_actions[tap]
+        menu = QtWidgets.QMenu(lst)
+        menu.addAction("Редактировать", lambda: self._edit_action(tap))
+        menu.addAction("Вверх", lambda: self._move_action(tap, -1))
+        menu.addAction("Вниз", lambda: self._move_action(tap, +1))
+        menu.addAction("Удалить", lambda: self._delete_action(tap))
+        menu.exec_(lst.mapToGlobal(pos))
 
     # --------------------- Settings ---------------------
     def _load_settings(self) -> None:
