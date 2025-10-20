@@ -179,6 +179,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._build_tabs()
         self._build_console()
         self._build_tray()
+        self._build_status_bar()
 
         # State
         self.tap_configs = {
@@ -257,16 +258,20 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.btn_connect = QtWidgets.QPushButton("Подключить")
         self.chk_autorun = QtWidgets.QCheckBox("Авторежим")
         self.chk_autorun.setChecked(True)
+        self.btn_settings = QtWidgets.QPushButton("Настройки")
 
         h.addWidget(QtWidgets.QLabel("COM порт:"))
         h.addWidget(self.cb_ports, 1)
         h.addWidget(self.btn_refresh)
         h.addWidget(self.btn_connect)
         h.addWidget(self.chk_autorun)
+        h.addStretch(1)
+        h.addWidget(self.btn_settings)
 
         self.btn_refresh.clicked.connect(self._refresh_ports)
         self.btn_connect.clicked.connect(self._toggle_connection)
         self.chk_autorun.toggled.connect(self._on_autorun_toggled)
+        self.btn_settings.clicked.connect(self._open_settings)
 
         self._refresh_ports()
 
@@ -433,15 +438,30 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         w.rb_app = rb_app      # type: ignore[attr-defined]
 
     def _build_console(self) -> None:
+        # Toggleable console area
         h = QtWidgets.QHBoxLayout()
         self._vbox.addLayout(h)
-        lbl = QtWidgets.QLabel("Консоль:")
-        h.addWidget(lbl)
-        btn = QtWidgets.QPushButton("Очистить консоль")
-        btn.clicked.connect(lambda: self.console.setPlainText(""))
-        h.addWidget(btn)
+        self.btn_toggle_console = QtWidgets.QPushButton("Показать консоль")
+        self.btn_toggle_console.setCheckable(True)
+        self.btn_toggle_console.setChecked(False)
+        self.btn_toggle_console.toggled.connect(self._toggle_console)
+        btn_clear = QtWidgets.QPushButton("Очистить консоль")
+        btn_clear.clicked.connect(lambda: self.console.setPlainText(""))
+        h.addWidget(self.btn_toggle_console)
+        h.addWidget(btn_clear)
         self._vbox.addWidget(self.console, 1)
         self.console.setMaximumHeight(140)
+        self.console.setVisible(False)
+
+    def _build_status_bar(self) -> None:
+        bar = QtWidgets.QHBoxLayout()
+        self._vbox.addLayout(bar)
+        self.lbl_conn = QtWidgets.QLabel("Не подключен")
+        self.lbl_op = QtWidgets.QLabel("")
+        bar.addWidget(self.lbl_conn)
+        bar.addStretch(1)
+        bar.addWidget(QtWidgets.QLabel("Статус:"))
+        bar.addWidget(self.lbl_op)
 
     def _build_tray(self) -> None:
         self.tray = QtWidgets.QSystemTrayIcon(self)
@@ -467,8 +487,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.sig_macro_action.connect(self._on_macro_action)
         self.sig_macro_end.connect(self._on_macro_end)
         self.sig_mode.connect(self._on_mode_from_device)
-        self.sig_ok.connect(lambda: self.console.log("OK"))
-        self.sig_err.connect(lambda r: self.console.log(f"ERR: {r}"))
+        self.sig_ok.connect(self._on_ok)
+        self.sig_err.connect(self._on_err)
         self.sig_prog_req.connect(self._on_prog_req)
         self.sig_prog_exit_req.connect(self._on_prog_exit_req)
 
@@ -501,6 +521,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.console.log(f"Подключено: {port_name}")
         self._lost_reported = False
         self.btn_connect.setText("Отключить")
+        self.lbl_conn.setText("Подключен")
         # Apply GUI-configured modes to device
         for tap in (1, 2, 3):
             mode = self.tap_configs[tap].mode
@@ -514,6 +535,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self.console.log("Потеря связи")
             self._lost_reported = True
         self.btn_connect.setText("Подключить")
+        self.lbl_conn.setText("Не подключен")
         # Stop recording if active
         if self.recorder is not None:
             self._stop_record(self.current_tap)
@@ -552,6 +574,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         page.rb_macro.setChecked(mode == TapConfig.MODE_MACRO)  # type: ignore[attr-defined]
         page.rb_app.setChecked(mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
         self.console.log(f"Режим тапа {tap}: {'Макрос' if mode==1 else 'Приложение'}")
+        self.lbl_op.setText("ОК")
 
     def _on_macro_begin(self, tap: int) -> None:
         self._reading_tap = tap
@@ -577,6 +600,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _on_macro_end(self, tap: int) -> None:
         self.console.log(f"Считан макрос для тапа {tap}")
         self._reading_tap = None
+        self.lbl_op.setText("ОК")
 
     def _on_prog_req(self) -> None:
         self.console.log("Вход в режим программирования запрошен")
@@ -762,6 +786,43 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 self.serial.send_line(f"SET_MODE:{tap}:{TapConfig.MODE_APP}")
                 self.serial.send_line(f"SET_APP_CODE:{tap}:Q{tap}")
 
+    def _open_settings(self) -> None:
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Настройки")
+        v = QtWidgets.QVBoxLayout(dlg)
+        chk_autostart = QtWidgets.QCheckBox("Запускать MultiTap вместе с Windows")
+        current = bool(self.settings.value("autostart_windows", False))
+        chk_autostart.setChecked(current)
+        v.addWidget(chk_autostart)
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        v.addWidget(btns)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            enabled = chk_autostart.isChecked()
+            self.settings.setValue("autostart_windows", enabled)
+            self.settings.sync()
+            self._apply_windows_autostart(enabled)
+
+    def _apply_windows_autostart(self, enable: bool) -> None:
+        if sys.platform.startswith('win'):
+            try:
+                import winreg  # type: ignore
+                run_key = r"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
+                    app_name = APP_NAME
+                    if enable:
+                        exe = sys.executable
+                        cmd = f'"{exe}" -m app'
+                        winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, cmd)
+                    else:
+                        try:
+                            winreg.DeleteValue(key, app_name)
+                        except FileNotFoundError:
+                            pass
+            except Exception as e:
+                self.console.log(f"Не удалось обновить автозапуск: {e}")
+
     def _add_key(self, tap: int) -> None:
         # Add a new key action interactively
         a = ActionItem('key', mods=0, key='A')
@@ -786,6 +847,18 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         menu.addAction("Вниз", lambda: self._move_action(tap, +1))
         menu.addAction("Удалить", lambda: self._delete_action(tap))
         menu.exec_(lst.mapToGlobal(pos))
+
+    def _toggle_console(self, checked: bool) -> None:
+        self.console.setVisible(checked)
+        self.btn_toggle_console.setText("Скрыть консоль" if checked else "Показать консоль")
+
+    def _on_ok(self) -> None:
+        self.console.log("OK")
+        self.lbl_op.setText("ОК")
+
+    def _on_err(self, reason: str) -> None:
+        self.console.log(f"ERR: {reason}")
+        self.lbl_op.setText("Ошибка")
 
     # --------------------- Settings ---------------------
     def _load_settings(self) -> None:

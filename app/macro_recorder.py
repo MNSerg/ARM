@@ -207,6 +207,15 @@ class MacroRecorder:
             self._pressed_keys.discard(name)
 
     def _name_to_token(self, name: str) -> Optional[str]:
+        # Normalize numpad names
+        if name.startswith('num '):
+            rest = name[4:].strip()
+            if rest.isdigit() and len(rest) == 1:
+                return rest
+        if name.startswith('numpad '):
+            rest = name[7:].strip()
+            if rest.isdigit() and len(rest) == 1:
+                return rest
         if len(name) == 1:
             # Single char, return uppercase letter or digit
             if name.isalpha():
