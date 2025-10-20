@@ -615,14 +615,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _on_prog_req(self) -> None:
         self.console.log("Вход в режим программирования запрошен")
+        # Всегда подтверждаем вход в режим программирования, чтобы LED загорелся
+        self.serial.send_line("PROG_ACK")
         if self.chk_autorun.isChecked():
-            self.serial.send_line("PROG_ACK")
             # Auto start recording on current tab
             self._start_record(self.current_tap)
             # Mark that next TAP decides the target tap on exit
             self._prog_exit_pending = True
-        else:
-            self.console.log("Авторежим выключен — запрос отклонен")
 
     def _on_prog_exit_req(self) -> None:
         self.console.log("Выход из режима программирования запрошен")
