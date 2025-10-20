@@ -482,8 +482,8 @@ void onMultiClick() {
     sendLine("PROG_EXIT_REQ");
     return;
   }
-  // Regular operation
-  uint8_t tap = clicks > 3 ? 3 : clicks;
+  // Regular operation (support up to 4 taps)
+  uint8_t tap = clicks > 4 ? 4 : clicks;
   TapHeader h = eepromReadHeader(tap);
   if (pcConnected) {
     if (h.mode == MODE_APP) {

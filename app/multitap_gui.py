@@ -186,10 +186,12 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             1: TapConfig(),
             2: TapConfig(),
             3: TapConfig(),
+            4: TapConfig(),
         }
         self.current_tap = 1
         self.recorder: Optional[MacroRecorder] = None
         self._reading_tap: Optional[int] = None
+        self._prog_exit_pending: bool = False
 
         # Restore settings
         self._load_settings()
@@ -280,7 +282,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._vbox.addWidget(self.tabs, 1)
 
         self.pages: Dict[int, QtWidgets.QWidget] = {}
-        for tap, title in [(1, "Одиночный тап"), (2, "Двойной тап"), (3, "Тройной тап")]:
+        for tap, title in [(1, "Одиночный тап"), (2, "Двойной тап"), (3, "Тройной тап"), (4, "Четверной тап")]:
             w = QtWidgets.QWidget()
             self.pages[tap] = w
             self._build_tap_page(w, tap)
@@ -484,7 +486,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.sig_log.connect(self.console.log)
         self.sig_connected.connect(self._on_connected)
         self.sig_disconnected.connect(self._on_disconnected)
-        self.sig_tap.connect(lambda t: self.console.log(f"Тап: {t}"))
+        self.sig_tap.connect(self._on_tap)
         self.sig_app_trigger.connect(self._on_app_trigger)
         self.sig_macro_begin.connect(self._on_macro_begin)
         self.sig_macro_action.connect(self._on_macro_action)
@@ -526,7 +528,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.btn_connect.setText("Отключить")
         self.lbl_conn.setText("Подключен")
         # Apply GUI-configured modes to device
-        for tap in (1, 2, 3):
+        for tap in (1, 2, 3, 4):
             mode = self.tap_configs[tap].mode
             self.serial.send_line(f"SET_MODE:{tap}:{mode}")
             if mode == TapConfig.MODE_APP:
@@ -611,6 +613,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self.serial.send_line("PROG_ACK")
             # Auto start recording on current tab
             self._start_record(self.current_tap)
+            # Mark that next TAP decides the target tap on exit
+            self._prog_exit_pending = True
         else:
             self.console.log("Авторежим выключен — запрос отклонен")
 
@@ -618,9 +622,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.console.log("Выход из режима программирования запрошен")
         self.serial.send_line("PROG_EXIT_ACK")
         if self.recorder is not None:
-            # Stop and auto-send macro
+            # Stop and auto-send macro to the tap last tapped during programming (or current tab fallback)
             self._stop_record(self.current_tap)
-            self._write_macro(self.current_tap)
+            target_tap = self.current_tap
+            self._write_macro(target_tap)
+        self._prog_exit_pending = False
 
     # --------------------- Mode and actions ---------------------
     def _on_mode_changed(self, tap: int, macro_checked: bool) -> None:
@@ -712,14 +718,6 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             cmb_key.setCurrentText(a.key)
         v.addWidget(QtWidgets.QLabel("Клавиша:"))
         v.addWidget(cmb_key)
-        # Additional settings
-        chk_start_minimized = QtWidgets.QCheckBox("Запускать свернутым в трей")
-        chk_start_minimized.setChecked(bool(self.settings.value("start_minimized", False)))
-        v.addWidget(chk_start_minimized)
-
-        chk_real_delays_default = QtWidgets.QCheckBox("По умолчанию реальные задержки при записи")
-        chk_real_delays_default.setChecked(bool(self.settings.value("real_delays_default", False)))
-        v.addWidget(chk_real_delays_default)
 
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         v.addWidget(btns)
@@ -808,6 +806,16 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         current = bool(self.settings.value("autostart_windows", False))
         chk_autostart.setChecked(current)
         v.addWidget(chk_autostart)
+
+        # Additional settings
+        chk_start_minimized = QtWidgets.QCheckBox("Запускать свернутым в трей")
+        chk_start_minimized.setChecked(bool(self.settings.value("start_minimized", False)))
+        v.addWidget(chk_start_minimized)
+
+        chk_real_delays_default = QtWidgets.QCheckBox("По умолчанию реальные задержки при записи")
+        chk_real_delays_default.setChecked(bool(self.settings.value("real_delays_default", False)))
+        v.addWidget(chk_real_delays_default)
+
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         v.addWidget(btns)
         btns.accepted.connect(dlg.accept)
@@ -876,12 +884,19 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.console.log(f"ERR: {reason}")
         self.lbl_op.setText("Ошибка")
 
+    def _on_tap(self, tap: int) -> None:
+        self.console.log(f"Тап: {tap}")
+        # When exiting programming mode, remember which tap to write macro to
+        if getattr(self, '_prog_exit_pending', False):
+            if tap in (1, 2, 3, 4):
+                self.current_tap = tap
+
     # --------------------- Settings ---------------------
     def _load_settings(self) -> None:
         # Autorun
         self.chk_autorun.setChecked(self.settings.value("autorun", True, type=bool))
         # App paths and modes
-        for tap in (1,2,3):
+        for tap in (1,2,3,4):
             mode = int(self.settings.value(f"tap{tap}/mode", TapConfig.MODE_MACRO))
             self.tap_configs[tap].mode = mode
             page = self.pages[tap]
@@ -893,7 +908,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _save_settings(self) -> None:
         self.settings.setValue("autorun", self.chk_autorun.isChecked())
-        for tap in (1,2,3):
+        for tap in (1,2,3,4):
             self.settings.setValue(f"tap{tap}/mode", self.tap_configs[tap].mode)
             self.settings.setValue(f"tap{tap}/app_path", self.tap_configs[tap].app_path)
         self.settings.sync()
