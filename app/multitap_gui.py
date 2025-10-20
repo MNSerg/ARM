@@ -458,8 +458,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._vbox.addLayout(bar)
         self.lbl_conn = QtWidgets.QLabel("Не подключен")
         self.lbl_op = QtWidgets.QLabel("")
+        self.lbl_rec = QtWidgets.QLabel("Запись: выкл")
         bar.addWidget(self.lbl_conn)
         bar.addStretch(1)
+        bar.addWidget(self.lbl_rec)
+        bar.addSpacing(24)
         bar.addWidget(QtWidgets.QLabel("Статус:"))
         bar.addWidget(self.lbl_op)
 
@@ -654,15 +657,17 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self._refresh_actions_list(tap)
 
         rec.on_action = on_action
-        rec.on_stop = lambda: self.console.log("Запись завершена")
+        rec.on_stop = lambda: (self.console.log("Запись завершена"), self.lbl_rec.setText("Запись: выкл"))
         rec.start()
         self.console.log("Запись начата")
+        self.lbl_rec.setText("Запись: вкл")
 
     def _stop_record(self, tap: int) -> None:
         if self.recorder is None:
             return
         self.recorder.stop()
         self.recorder = None
+        self.lbl_rec.setText("Запись: выкл")
 
     def _refresh_actions_list(self, tap: int) -> None:
         lst = self.lst_actions[tap]
@@ -707,6 +712,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             cmb_key.setCurrentText(a.key)
         v.addWidget(QtWidgets.QLabel("Клавиша:"))
         v.addWidget(cmb_key)
+        # Additional settings
+        chk_start_minimized = QtWidgets.QCheckBox("Запускать свернутым в трей")
+        chk_start_minimized.setChecked(bool(self.settings.value("start_minimized", False)))
+        v.addWidget(chk_start_minimized)
+
+        chk_real_delays_default = QtWidgets.QCheckBox("По умолчанию реальные задержки при записи")
+        chk_real_delays_default.setChecked(bool(self.settings.value("real_delays_default", False)))
+        v.addWidget(chk_real_delays_default)
+
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         v.addWidget(btns)
         btns.accepted.connect(dlg.accept)
@@ -801,6 +815,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             enabled = chk_autostart.isChecked()
             self.settings.setValue("autostart_windows", enabled)
+            self.settings.setValue("start_minimized", chk_start_minimized.isChecked())
+            self.settings.setValue("real_delays_default", chk_real_delays_default.isChecked())
             self.settings.sync()
             self._apply_windows_autostart(enabled)
 

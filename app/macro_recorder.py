@@ -93,6 +93,18 @@ class MacroRecorder:
         self._last_action_time = time.monotonic()
         self._pressed_mods: int = 0
         self._pressed_keys: set[str] = set()
+        # Build a scan-code-to-token map to be layout-agnostic for letters/digits
+        self._scancode_to_token: Dict[int, str] = {}
+        try:
+            if keyboard is not None:
+                for ch in 'abcdefghijklmnopqrstuvwxyz':
+                    for sc in keyboard.key_to_scan_codes(ch):
+                        self._scancode_to_token[sc] = ch.upper()
+                for d in '0123456789':
+                    for sc in keyboard.key_to_scan_codes(d):
+                        self._scancode_to_token[sc] = d
+        except Exception:
+            pass
 
     def start(self) -> None:
         """Start recording in a background thread."""
@@ -161,6 +173,16 @@ class MacroRecorder:
 
             # Map to canonical key token
             key_token = self._name_to_token(name)
+            # If token not valid (e.g., non-Latin letters), try scan code mapping to A..Z/0..9
+            if key_token is None or (len(key_token) == 1 and not (key_token.isdigit() or ('A' <= key_token <= 'Z'))):
+                try:
+                    sc = getattr(event, 'scan_code', None)
+                    if sc is not None:
+                        mapped = self._scancode_to_token.get(sc)
+                        if mapped:
+                            key_token = mapped
+                except Exception:
+                    pass
             if key_token is None:
                 return
             # Special handling: Shift + digit should still record the digit key token
