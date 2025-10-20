@@ -163,6 +163,27 @@ class MacroRecorder:
             key_token = self._name_to_token(name)
             if key_token is None:
                 return
+            # Special handling: Shift + digit should still record the digit key token
+            # keyboard library gives ')' for Shift+9 etc.; normalize to underlying digit
+            if key_token in (
+                ')','!','@','#','$','%','^','&','*','(',
+            ):
+                # Map shifted symbols back to their digit counterparts
+                shifted_map = {
+                    ')': '9',
+                    '!': '1',
+                    '@': '2',
+                    '#': '3',
+                    '$': '4',
+                    '%': '5',
+                    '^': '6',
+                    '&': '7',
+                    '*': '8',
+                    '(': '0',
+                }
+                key_token = shifted_map.get(key_token, None)
+                if key_token is None:
+                    return
             # Enforce max combos
             if self._combos_count >= MAX_COMBOS:
                 # Stop silently when max reached
@@ -192,6 +213,8 @@ class MacroRecorder:
                 return name.upper()
             if name.isdigit():
                 return name
+            # Allow shifted symbol keys to be handled upstream
+            return name
         # Special names
         if name in SPECIAL_KEYS:
             return SPECIAL_KEYS[name]

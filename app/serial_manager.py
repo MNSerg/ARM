@@ -88,6 +88,7 @@ class SerialManager:
         self._stop_event = threading.Event()
         self._outbox: "queue.Queue[str]" = queue.Queue()
         self._connected_once_notified = False
+        self._autoscan_enabled = True
         # Callbacks
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_connected: Optional[Callable[[str], None]] = None
@@ -128,6 +129,21 @@ class SerialManager:
 
     def current_port(self) -> Optional[str]:
         return self._port_name
+
+    def set_autoscan_enabled(self, enabled: bool) -> None:
+        """Enable/disable automatic scanning and connecting when disconnected."""
+        self._autoscan_enabled = enabled
+
+    def disconnect(self) -> None:
+        """Manually disconnect from the current serial port, keeping the thread running."""
+        was_connected = self.is_connected()
+        pn = self._port_name
+        self._close_serial()
+        if was_connected:
+            if self.on_log:
+                self.on_log(f"Отключено от {pn}")
+            if self.on_disconnected:
+                self.on_disconnected()
 
     def send_line(self, line: str) -> None:
         """Queue a line to send over serial (thread-safe)."""
@@ -184,7 +200,8 @@ class SerialManager:
             if self._ser is None or not self._ser.is_open:
                 if now - last_scan >= SCAN_INTERVAL_SEC:
                     last_scan = now
-                    self._auto_scan_attempt()
+                    if self._autoscan_enabled:
+                        self._auto_scan_attempt()
                 # Small sleep to avoid tight loop
                 time.sleep(0.05)
                 continue

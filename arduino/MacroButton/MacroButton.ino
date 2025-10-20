@@ -467,9 +467,7 @@ void handleLine(const String &l) {
 
 // ---------------- Button handling ----------------
 
-void onClick() {
-  // Single click event; we'll count clicks using getNumberClicks in multiClick handler
-}
+// We'll rely solely on MultiClick to correctly differentiate single and double taps.
 
 void onLongPressStart() {
   // Request programming mode from PC

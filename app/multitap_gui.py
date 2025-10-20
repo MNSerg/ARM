@@ -238,7 +238,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         h.addWidget(self.chk_autorun)
 
         self.btn_refresh.clicked.connect(self._refresh_ports)
-        self.btn_connect.clicked.connect(self._connect_selected)
+        self.btn_connect.clicked.connect(self._toggle_connection)
+        self.chk_autorun.toggled.connect(self._on_autorun_toggled)
 
         self._refresh_ports()
 
@@ -432,7 +433,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _connect_selected(self) -> None:
         port = self.cb_ports.currentText()
         if port:
-            self.serial.try_connect_port(port)
+            if self.serial.try_connect_port(port):
+                self.btn_connect.setText("Отключить")
 
     def _on_tab_changed(self, index: int) -> None:
         self.current_tap = index + 1
@@ -440,6 +442,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _on_connected(self, port_name: str) -> None:
         self.console.log(f"Подключено: {port_name}")
         self._lost_reported = False
+        self.btn_connect.setText("Отключить")
         # Apply GUI-configured modes to device
         for tap in (1, 2, 3):
             mode = self.tap_configs[tap].mode
@@ -452,9 +455,21 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if not self._lost_reported:
             self.console.log("Потеря связи")
             self._lost_reported = True
+        self.btn_connect.setText("Подключить")
         # Stop recording if active
         if self.recorder is not None:
             self._stop_record(self.current_tap)
+
+    def _toggle_connection(self) -> None:
+        if self.serial.is_connected():
+            self.serial.disconnect()
+            self.btn_connect.setText("Подключить")
+        else:
+            self._connect_selected()
+
+    def _on_autorun_toggled(self, checked: bool) -> None:
+        # Autorun also controls autoscan/auto-connect behavior
+        self.serial.set_autoscan_enabled(checked)
 
     def _on_app_trigger(self, tap: int, code: str) -> None:
         self.console.log(f"APP_TRIGGER tap={tap} code={code}")
