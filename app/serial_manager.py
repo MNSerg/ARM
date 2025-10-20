@@ -89,6 +89,7 @@ class SerialManager:
         self._outbox: "queue.Queue[str]" = queue.Queue()
         self._connected_once_notified = False
         self._autoscan_enabled = True
+        self._device_preference: str = "auto"  # one of: 'auto', 'micro', 'esp32c3'
         # Callbacks
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_connected: Optional[Callable[[str], None]] = None
@@ -133,6 +134,13 @@ class SerialManager:
     def set_autoscan_enabled(self, enabled: bool) -> None:
         """Enable/disable automatic scanning and connecting when disconnected."""
         self._autoscan_enabled = enabled
+
+    def set_device_preference(self, preference: str) -> None:
+        """Set preferred device type for autoscan: 'auto', 'micro', or 'esp32c3'."""
+        pref = preference.lower().strip()
+        if pref not in ("auto", "micro", "esp32c3"):
+            pref = "auto"
+        self._device_preference = pref
 
     def disconnect(self) -> None:
         """Manually disconnect from the current serial port, keeping the thread running."""
@@ -247,12 +255,23 @@ class SerialManager:
                 time.sleep(0.25)
 
     def _auto_scan_attempt(self) -> None:
-        """Scan ports and connect if a port with 'Arduino Micro' found."""
+        """Scan ports based on preferred device and connect to the first match."""
         for p in list_ports.comports():
             desc = (p.description or "").lower()
-            if "arduino micro" in desc:
+            if self._desc_matches_preference(desc):
                 self.try_connect_port(p.device)
                 return
+
+    def _desc_matches_preference(self, desc: str) -> bool:
+        """Return True if the port description matches the selected device preference."""
+        micro_match = ("arduino micro" in desc)
+        esp_match = ("esp32" in desc) or ("esp32-c3" in desc) or ("arduino leonardo" in desc)
+        if self._device_preference == "micro":
+            return micro_match
+        if self._device_preference == "esp32c3":
+            return esp_match
+        # auto: accept either (prefer micro in GUI preselect logic)
+        return micro_match or esp_match
 
     def _write_now(self, line: str) -> None:
         if not self._ser or not self._ser.is_open:

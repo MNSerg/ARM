@@ -203,6 +203,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 self.cmb_delay_mode[tap].setCurrentIndex(1)
         if bool(self.settings.value("start_minimized", False)):
             QtCore.QTimer.singleShot(0, self.hide)
+        # Apply device preference to serial autoscan
+        device_pref = str(self.settings.value("device_preference", "auto"))
+        self.serial.set_device_preference(device_pref)
 
         # Connect signals
         self._wire_signals()
@@ -514,8 +517,18 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         for dev, desc in self.serial.list_ports_with_desc():
             label = f"{dev} ({desc})" if desc else dev
             self.cb_ports.addItem(label, dev)
-            if 'arduino micro' in (desc or '').lower():
+            d = (desc or '').lower()
+            pref = str(self.settings.value("device_preference", "auto")).lower()
+            if pref == 'micro' and 'arduino micro' in d:
                 preferred_index = i
+            elif pref == 'esp32c3' and (('esp32' in d) or ('esp32-c3' in d) or ('arduino leonardo' in d)):
+                preferred_index = i
+            elif pref == 'auto' and preferred_index < 0:
+                # choose micro first if seen, otherwise any esp32
+                if 'arduino micro' in d:
+                    preferred_index = i
+                elif (('esp32' in d) or ('esp32-c3' in d) or ('arduino leonardo' in d)):
+                    preferred_index = i
             i += 1
         if preferred_index >= 0:
             self.cb_ports.setCurrentIndex(preferred_index)
@@ -856,6 +869,22 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         chk_real_delays_default.setChecked(bool(self.settings.value("real_delays_default", False)))
         v.addWidget(chk_real_delays_default)
 
+        # Device preference
+        device_pref_label = QtWidgets.QLabel("Устройство для автопоиска:")
+        cmb_device_pref = QtWidgets.QComboBox()
+        cmb_device_pref.addItems(["Авто", "Arduino Micro", "ESP32-C3 mini"])
+        saved_pref = str(self.settings.value("device_preference", "auto")).lower()
+        if saved_pref == 'micro':
+            cmb_device_pref.setCurrentIndex(1)
+        elif saved_pref == 'esp32c3':
+            cmb_device_pref.setCurrentIndex(2)
+        else:
+            cmb_device_pref.setCurrentIndex(0)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(device_pref_label)
+        row.addWidget(cmb_device_pref)
+        v.addLayout(row)
+
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         v.addWidget(btns)
         btns.accepted.connect(dlg.accept)
@@ -865,8 +894,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self.settings.setValue("autostart_windows", enabled)
             self.settings.setValue("start_minimized", chk_start_minimized.isChecked())
             self.settings.setValue("real_delays_default", chk_real_delays_default.isChecked())
+            # Save device preference
+            idx = cmb_device_pref.currentIndex()
+            pref = 'auto' if idx == 0 else ('micro' if idx == 1 else 'esp32c3')
+            self.settings.setValue("device_preference", pref)
             self.settings.sync()
             self._apply_windows_autostart(enabled)
+            # Apply device preference immediately
+            self.serial.set_device_preference(pref)
+            self._refresh_ports()
 
     def _apply_windows_autostart(self, enable: bool) -> None:
         if sys.platform.startswith('win'):
