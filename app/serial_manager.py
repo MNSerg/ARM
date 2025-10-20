@@ -329,6 +329,17 @@ class SerialManager:
             if self.on_prog_exit_req:
                 self.on_prog_exit_req()
             return
+        if line.startswith("PROG_EXIT_TAPS:"):
+            try:
+                taps = int(line.split(":")[1])
+                # Reuse TAP callback to route target tap
+                if self.on_tap:
+                    self.on_tap(taps)
+                if self.on_prog_exit_req:
+                    self.on_prog_exit_req()
+            except Exception:
+                pass
+            return
         if line == "OK":
             if self.on_ok:
                 self.on_ok()

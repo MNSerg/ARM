@@ -39,7 +39,7 @@ const uint8_t MODE_APP = 2;
 // EEPROM layout
 // [0..2] signature 'MKB'
 // [3]    version 0x01
-// For each tap (1..3): block of 192 bytes
+// For each tap (1..4): block of 192 bytes
 //   [0] mode
 //   [1] appCode (1..6 map to F1..F3,Q1..Q3) - currently using Q1..Q3
 //   [2..3] defaultDelayMs (uint16)
@@ -297,6 +297,11 @@ void setDefaults() {
   TapHeader h3 = {MODE_MACRO, 3, DEFAULT_DELAY_MS, 1, 1};
   eepromWriteHeader(3, h3);
   eepromWriteAction(3, 0, ACT_KEY, (MOD_CTRL | MOD_SHIFT), tokenFromKeyString("ESC"));
+
+  // Tap 4: Win+D (Show Desktop)
+  TapHeader h4 = {MODE_MACRO, 4, DEFAULT_DELAY_MS, 1, 1};
+  eepromWriteHeader(4, h4);
+  eepromWriteAction(4, 0, ACT_KEY, MOD_GUI, tokenFromKeyString("D"));
 }
 
 bool checkSignature() {
@@ -478,8 +483,12 @@ void onMultiClick() {
   uint8_t clicks = button.getNumberClicks();
   if (clicks == 0) return;
   if (programmingMode) {
-    // Exit programming mode on any click
-    sendLine("PROG_EXIT_REQ");
+    // Exit programming mode and inform PC how many taps were used to exit
+    String msg = String("PROG_EXIT_TAPS:") + clicks;
+    sendLine(msg);
+    // Locally clear programming mode and LED
+    programmingMode = false;
+    digitalWrite(PIN_LED, LOW);
     return;
   }
   // Regular operation (support up to 4 taps)

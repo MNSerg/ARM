@@ -195,6 +195,12 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
         # Restore settings
         self._load_settings()
+        # Apply settings after load
+        if bool(self.settings.value("real_delays_default", False)):
+            for tap in (1,2,3,4):
+                self.cmb_delay_mode[tap].setCurrentIndex(1)
+        if bool(self.settings.value("start_minimized", False)):
+            QtCore.QTimer.singleShot(0, self.hide)
 
         # Connect signals
         self._wire_signals()
