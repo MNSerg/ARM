@@ -200,7 +200,16 @@ void onMultiClick() {
   if (programmingMode) { sendLine(String("PROG_EXIT_TAPS:") + clicks); programmingMode = false; digitalWrite(PIN_LED, LOW); return; }
   uint8_t tap = clicks > 4 ? 4 : clicks;
   TapHeader h = eepromReadHeader(tap);
-  if (pcConnected && h.mode == MODE_APP) { String code = (h.appCode == 1) ? "Q1" : (h.appCode == 2) ? "Q2" : (h.appCode == 3) ? "Q3" : (h.appCode == 4) ? "Q4" : "Q1"; sendLine(String("APP_TRIGGER:") + tap + ":" + code); sendLine(String("TAP:") + tap); return; }
+  if (pcConnected) {
+    if (h.mode == MODE_APP) {
+      String code = (h.appCode == 1) ? "Q1" : (h.appCode == 2) ? "Q2" : (h.appCode == 3) ? "Q3" : (h.appCode == 4) ? "Q4" : "Q1";
+      sendLine(String("APP_TRIGGER:") + tap + ":" + code);
+      sendLine(String("TAP:") + tap);
+      return;
+    }
+    executeMacro(tap); sendLine(String("TAP:") + tap); return;
+  }
+  // No PC connection: always execute stored macro regardless of mode
   executeMacro(tap); sendLine(String("TAP:") + tap);
 }
 
@@ -222,5 +231,6 @@ void setup() {
 
 void loop() {
   button.tick();
+  if (!Serial) { pcConnected = false; }
   while (Serial.available()) { String l = Serial.readStringUntil('\n'); l.trim(); if (l.length() == 0) continue; handleLine(l); }
 }

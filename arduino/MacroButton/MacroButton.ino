@@ -497,13 +497,17 @@ void onMultiClick() {
   if (pcConnected) {
     if (h.mode == MODE_APP) {
       // send app trigger to PC
-      String code = (h.appCode == 1) ? "Q1" : (h.appCode == 2) ? "Q2" : (h.appCode == 3) ? "Q3" : "Q1";
+      String code = (h.appCode == 1) ? "Q1" : (h.appCode == 2) ? "Q2" : (h.appCode == 3) ? "Q3" : (h.appCode == 4) ? "Q4" : "Q1";
       sendLine(String("APP_TRIGGER:") + tap + ":" + code);
       sendLine(String("TAP:") + tap);
       return;
     }
+    // MODE_MACRO under pcConnected -> execute macro
+    executeMacro(tap);
+    sendLine(String("TAP:") + tap);
+    return;
   }
-  // fallback to macro execution
+  // No PC connection: always execute stored macro regardless of mode
   executeMacro(tap);
   sendLine(String("TAP:") + tap);
 }
@@ -539,6 +543,11 @@ void setup() {
 
 void loop() {
   button.tick();
+
+  // If host closed the serial port, consider app connection lost
+  if (!Serial) {
+    pcConnected = false;
+  }
 
   // Read serial lines
   while (Serial.available()) {
