@@ -9,6 +9,8 @@
 #include <USBHIDKeyboard.h>
 #include <EEPROM.h>
 #include <OneButton.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
 
 // Pins (ESP32-C3 mini)
 const uint8_t PIN_LED = 10;
@@ -54,6 +56,15 @@ OneButton button(PIN_BUTTON, true /* activeLow */);
 USBHIDKeyboard Keyboard;
 bool pcConnected = false;
 bool programmingMode = false;
+WiFiUDP Udp;
+
+// -------------------- Wake-on-LAN (WOL) settings --------------------
+#define WOL_ENABLED 1
+const char* WIFI_SSID = "YourSSID";      // TODO: set SSID
+const char* WIFI_PASS = "YourPassword";  // TODO: set password
+const uint8_t WOL_TARGET_MAC[6] = { 0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33 }; // PC NIC MAC to wake
+const char* WOL_BROADCAST_IP = "255.255.255.255"; // or your subnet broadcast, e.g., "192.168.1.255"
+const uint16_t WOL_PORT = 9; // common WoL port: 9 or 7
 
 // Serial helpers
 void sendLine(const String &s) { Serial.println(s); }
@@ -193,7 +204,27 @@ void handleLine(const String &l) {
   if (l == "PROG_EXIT_ACK") { programmingMode = false; digitalWrite(PIN_LED, LOW); return; }
 }
 
-void onLongPressStart() { sendLine("PROG_REQ"); }
+void onLongPressStart() {
+  // If PC is offline, use long press to send Wake-on-LAN magic packet
+  if (!pcConnected) {
+#if WOL_ENABLED
+    if (ensureWiFiConnected(4000)) {
+      if (sendWakeOnLan()) {
+        sendLine("WOL:OK");
+      } else {
+        sendLine("WOL:ERR_SEND");
+      }
+    } else {
+      sendLine("WOL:ERR_WIFI");
+    }
+    // Blink quickly to indicate WoL sent
+    for (int i = 0; i < 2; ++i) { digitalWrite(PIN_LED, HIGH); delay(100); digitalWrite(PIN_LED, LOW); delay(100); }
+    return;
+#endif
+  }
+  // Otherwise request programming mode from PC
+  sendLine("PROG_REQ");
+}
 
 void onMultiClick() {
   uint8_t clicks = button.getNumberClicks(); if (clicks == 0) return;
@@ -218,6 +249,11 @@ void setup() {
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   Serial.begin(115200);
   USB.begin(); Keyboard.begin();
+  // Configure WiFi for on-demand use by WoL
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
+  WiFi.setAutoConnect(false);
+  WiFi.setAutoReconnect(false);
   button.setClickTicks(CLICK_TICKS_MS); button.setPressTicks(LONG_PRESS_MS);
   button.attachLongPressStart(onLongPressStart); button.attachMultiClick(onMultiClick);
   EEPROM.begin(EEPROM_SIZE);
