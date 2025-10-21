@@ -901,10 +901,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             pref = 'auto' if idx == 0 else ('micro' if idx == 1 else 'esp32c3')
             self.settings.setValue("device_preference", pref)
             self.settings.sync()
+            # Apply immediately
             self._apply_windows_autostart(enabled)
-            # Apply device preference immediately
             self.serial.set_device_preference(pref)
             self._refresh_ports()
+            # Update delay mode combos on all tabs to reflect the new default immediately
+            use_real = chk_real_delays_default.isChecked()
+            for t in (1, 2, 3, 4):
+                if t in self.cmb_delay_mode:
+                    self.cmb_delay_mode[t].setCurrentIndex(1 if use_real else 0)
 
     def _apply_windows_autostart(self, enable: bool) -> None:
         if sys.platform.startswith('win'):
