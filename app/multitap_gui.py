@@ -29,6 +29,7 @@ import subprocess
 from typing import List, Dict, Optional, Tuple
 
 from PyQt5 import QtWidgets, QtGui, QtCore
+from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 
 # Support running as a module (python -m app) and as a script
 try:
@@ -1025,9 +1026,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
 def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
-    # Single-instance guard: use a shared QLocalServer
+    # Single-instance guard using QLocalServer/QLocalSocket (QtNetwork)
     server_name = "com.example.multitap.singleinstance"
-    socket = QtCore.QLocalSocket()
+    socket = QLocalSocket()
     socket.connectToServer(server_name)
     if socket.waitForConnected(100):
         # Another instance is running: signal it to show and exit
@@ -1038,9 +1039,9 @@ def main() -> None:
         except Exception:
             pass
         sys.exit(0)
-    server = QtCore.QLocalServer()
+    server = QLocalServer()
     try:
-        QtCore.QLocalServer.removeServer(server_name)
+        QLocalServer.removeServer(server_name)
     except Exception:
         pass
     server.listen(server_name)
