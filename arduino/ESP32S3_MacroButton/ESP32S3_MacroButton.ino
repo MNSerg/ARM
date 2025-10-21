@@ -17,6 +17,7 @@
 #include <OneButton.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <string.h>
 
 // ---------------- Pins (adjust as needed) ----------------
 const uint8_t PIN_LED = 10;
@@ -64,6 +65,15 @@ USBHIDKeyboard Keyboard;
 WiFiUDP Udp;
 bool pcConnected = false;
 bool programmingMode = false;
+
+// -------------------- Wake-on-LAN (WOL) settings --------------------
+// Libraries required: USB, USBHIDKeyboard, EEPROM, OneButton, WiFi, WiFiUdp
+#define WOL_ENABLED 1
+const char* WIFI_SSID = "YourSSID";      // TODO: set SSID
+const char* WIFI_PASS = "YourPassword";  // TODO: set password
+const uint8_t WOL_TARGET_MAC[6] = { 0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33 }; // PC NIC MAC to wake
+const char* WOL_BROADCAST_IP = "255.255.255.255"; // or your subnet broadcast, e.g., "192.168.1.255"
+const uint16_t WOL_PORT = 9; // common: 9 or 7
 
 // ---------------- Serial helpers ----------------
 void sendLine(const String &s) { Serial.println(s); }
@@ -211,14 +221,13 @@ void handleLine(const String &l) {
 void onLongPressStart() {
   // If PC is offline, long press sends WoL
   if (!pcConnected) {
-#if 1
+#if WOL_ENABLED
     if (WiFi.status() != WL_CONNECTED) {
       WiFi.mode(WIFI_STA);
       WiFi.persistent(false);
-      WiFi.setAutoConnect(false);
       WiFi.setAutoReconnect(false);
       unsigned long start = millis();
-      WiFi.begin("YourSSID", "YourPassword"); // configure below in the WoL config block
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
       while (WiFi.status() != WL_CONNECTED && (millis() - start) < 4000) { delay(50); }
       if (WiFi.status() == WL_CONNECTED) { Udp.begin(12345); }
     }
@@ -251,7 +260,9 @@ void setup() {
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   Serial.begin(115200);
   USB.begin(); Keyboard.begin();
-  button.setClickTicks(CLICK_TICKS_MS); button.setPressTicks(LONG_PRESS_MS);
+  // OneButton 2.x: prefer setClickMs/setPressMs
+  button.setClickMs(CLICK_TICKS_MS);
+  button.setPressMs(LONG_PRESS_MS);
   button.attachLongPressStart(onLongPressStart); button.attachMultiClick(onMultiClick);
   EEPROM.begin(EEPROM_SIZE);
 #ifdef CLEAR_EEPROM
