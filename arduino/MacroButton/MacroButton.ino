@@ -416,7 +416,7 @@ void setMode(uint8_t tap, uint8_t mode) {
 void setAppCode(uint8_t tap, const String &code) {
   // codes Q1, Q2, Q3 -> map to 1,2,3
   uint8_t app = 0;
-  if (code == "Q1") app = 1; else if (code == "Q2") app = 2; else if (code == "Q3") app = 3;
+  if (code == "Q1") app = 1; else if (code == "Q2") app = 2; else if (code == "Q3") app = 3; else if (code == "Q4") app = 4;
   TapHeader h = eepromReadHeader(tap);
   h.appCode = app;
   eepromWriteHeader(tap, h);

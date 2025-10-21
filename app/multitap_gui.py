@@ -652,6 +652,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 # Copy buffer into target tap list for UI consistency
                 self.tap_configs[target_tap].actions = [ActionItem(a.action_type, a.mods, a.key, a.ms) for a in self._prog_buffer]
                 self._refresh_actions_list(target_tap)
+                # Send SET_MODE to ensure device is in macro mode before write
+                self.serial.send_line(f"SET_MODE:{target_tap}:{TapConfig.MODE_MACRO}")
                 self._write_macro_actions(target_tap, self._prog_buffer)
             else:
                 # Fallback: write current tap actions
