@@ -231,6 +231,11 @@ void setup() {
 
 void loop() {
   button.tick();
-  if (!Serial) { pcConnected = false; }
+  // On ESP32-C3, check DTR to detect if host has the port open
+  #if defined(ARDUINO_ARCH_ESP32)
+    if (!Serial.dtr()) { pcConnected = false; }
+  #else
+    if (!Serial) { pcConnected = false; }
+  #endif
   while (Serial.available()) { String l = Serial.readStringUntil('\n'); l.trim(); if (l.length() == 0) continue; handleLine(l); }
 }

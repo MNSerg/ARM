@@ -545,9 +545,7 @@ void loop() {
   button.tick();
 
   // If host closed the serial port, consider app connection lost
-  if (!Serial) {
-    pcConnected = false;
-  }
+  if (!Serial) { pcConnected = false; }
 
   // Read serial lines
   while (Serial.available()) {
