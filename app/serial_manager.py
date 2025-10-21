@@ -55,8 +55,8 @@ from typing import Callable, Optional, List
 
 SCAN_INTERVAL_SEC = 0.5
 BAUDRATE = 115200
-READ_TIMEOUT = 0.1  # seconds
-WRITE_TIMEOUT = 0.5  # seconds
+READ_TIMEOUT = 0.1   # seconds
+WRITE_TIMEOUT = 2.5  # seconds (increase to avoid intermittent timeouts)
 
 
 class SerialManager:
@@ -176,7 +176,13 @@ class SerialManager:
         Returns True on success, False otherwise.
         """
         try:
-            ser = serial.Serial(port=port_name, baudrate=BAUDRATE, timeout=READ_TIMEOUT, write_timeout=WRITE_TIMEOUT)
+            ser = serial.Serial(
+                port=port_name,
+                baudrate=BAUDRATE,
+                timeout=READ_TIMEOUT,
+                write_timeout=WRITE_TIMEOUT,
+                inter_byte_timeout=WRITE_TIMEOUT,
+            )
             # Small delay to stabilize
             time.sleep(0.2)
             self._ser = ser
