@@ -65,6 +65,8 @@ USBHIDKeyboard Keyboard;
 WiFiUDP Udp;
 bool pcConnected = false;
 bool programmingMode = false;
+unsigned long lastRxMs = 0;
+const unsigned long PC_SILENCE_TIMEOUT_MS = 1500;
 
 // -------------------- Wake-on-LAN (WOL) settings --------------------
 // Libraries required: USB, USBHIDKeyboard, EEPROM, OneButton, WiFi, WiFiUdp
@@ -206,13 +208,15 @@ bool checkSignature() { return EEPROM.read(0) == 'M' && EEPROM.read(1) == 'K' &&
 
 // ---------------- Protocol ----------------
 void handleLine(const String &l) {
-  if (l == "HELLO_PC") { sendLine("HELLO_ARDUINO"); pcConnected = true; return; }
-  if (l == "HELLO_ACK") { pcConnected = true; return; }
-  if (l.startsWith("SET_MODE:")) { int i1 = l.indexOf(':'), i2 = l.indexOf(':', i1 + 1); uint8_t tap = (uint8_t) l.substring(i1 + 1, i2).toInt(); uint8_t mode = (uint8_t) l.substring(i2 + 1).toInt(); TapHeader h = eepromReadHeader(tap); h.mode = mode; eepromWriteHeader(tap, h); sendLine(String("MODE:") + tap + ":" + mode); return; }
+  if (l == "HELLO_PC") { sendLine("HELLO_ARDUINO"); pcConnected = true; lastRxMs = millis(); return; }
+  if (l == "HELLO_ACK") { pcConnected = true; lastRxMs = millis(); return; }
+  lastRxMs = millis(); pcConnected = true;
+  if (l.startsWith("SET_MODE:")) { int i1 = l.indexOf(':'), i2 = l.indexOf(':', i1 + 1); uint8_t tap = (uint8_t) l.substring(i1 + 1, i2).toInt(); uint8_t mode = (uint8_t) l.substring(i2 + 1).toInt(); TapHeader h = eepromReadHeader(tap); h.mode = mode; eepromWriteHeader(tap, h); EEPROM.commit(); sendLine(String("MODE:") + tap + ":" + mode); return; }
   if (l.startsWith("GET_MODE:")) { uint8_t tap = (uint8_t) l.substring(9).toInt(); TapHeader h = eepromReadHeader(tap); sendLine(String("MODE:") + tap + ":" + h.mode); return; }
   if (l.startsWith("READ_MACRO:")) { uint8_t tap = (uint8_t) l.substring(11).toInt(); TapHeader h = eepromReadHeader(tap); sendLine(String("MACRO_BEGIN:") + tap); for (uint8_t i = 0; i < h.actionsCount; i++) { uint8_t type, a, b; eepromReadAction(tap, i, type, a, b); if (type == ACT_DELAY) { uint16_t ms = (uint16_t)b << 8 | a; sendLine(String("A:D:") + ms); } else if (type == ACT_KEY) { String keyStr; if (b >= 1 && b <= 26) keyStr = String(char('A' + (b - 1))); else if (b >= 27 && b <= 36) keyStr = String(char('0' + (b - 27))); else if (b >= 64 && b <= 75) keyStr = String("F") + (b - 63); else { switch (b) { case 80: keyStr = "ESC"; break; case 81: keyStr = "TAB"; break; case 82: keyStr = "ENTER"; break; case 83: keyStr = "SPACE"; break; case 84: keyStr = "HOME"; break; case 85: keyStr = "END"; break; case 86: keyStr = "PAGEUP"; break; case 87: keyStr = "PAGEDOWN"; break; case 88: keyStr = "LEFT"; break; case 89: keyStr = "RIGHT"; break; case 90: keyStr = "UP"; break; case 91: keyStr = "DOWN"; break; case 92: keyStr = "BACKSPACE"; break; case 93: keyStr = "DELETE"; break; default: keyStr = ""; break; } } sendLine(String("A:K:") + a + ":" + keyStr); } } sendLine(String("MACRO_END:") + tap); return; }
-  if (l.startsWith("WRITE_MACRO_BEGIN:")) { uint8_t tap = (uint8_t) l.substring(18).toInt(); uint8_t actions = 0, combos = 0; int p = eepromOffsetForTap(tap) + 6; unsigned long startMs = millis(); while (true) { if (millis() - startMs > 3000) { sendLine("ERR:TIMEOUT"); return; } if (!Serial.available()) { delay(5); continue; } String x = Serial.readStringUntil('\n'); x.trim(); if (x.length() == 0) continue; if (x == "WRITE_MACRO_END") break; if (!x.startsWith("A:")) continue; if (x.charAt(2) == 'K') { int p1 = x.indexOf(':', 4); if (p1 < 0) continue; uint8_t mods = (uint8_t) x.substring(4, p1).toInt(); uint8_t token = tokenFromKeyString(x.substring(p1 + 1)); EEPROM.write(p++, ACT_KEY); EEPROM.write(p++, mods); EEPROM.write(p++, token); actions++; combos++; } else if (x.charAt(2) == 'D') { uint16_t ms = (uint16_t) x.substring(4).toInt(); EEPROM.write(p++, ACT_DELAY); EEPROM.write(p++, ms & 0xFF); EEPROM.write(p++, (ms >> 8) & 0xFF); actions++; } } TapHeader h = eepromReadHeader(tap); h.actionsCount = actions; h.combosCount = combos; eepromWriteHeader(tap, h); sendLine("OK"); return; }
-  if (l.startsWith("SET_APP_CODE:")) { int i1 = l.indexOf(':'), i2 = l.indexOf(':', i1 + 1); uint8_t tap = (uint8_t) l.substring(i1 + 1, i2).toInt(); String code = l.substring(i2 + 1); TapHeader h = eepromReadHeader(tap); uint8_t app = 0; if (code == "Q1") app = 1; else if (code == "Q2") app = 2; else if (code == "Q3") app = 3; else if (code == "Q4") app = 4; h.appCode = app; eepromWriteHeader(tap, h); sendLine("OK"); return; }
+  if (l.startsWith("WRITE_MACRO_BEGIN:")) { uint8_t tap = (uint8_t) l.substring(18).toInt(); uint8_t actions = 0, combos = 0; int p = eepromOffsetForTap(tap) + 6; unsigned long startMs = millis(); while (true) { if (millis() - startMs > 5000) { sendLine("ERR:TIMEOUT"); return; } if (!Serial.available()) { delay(5); continue; } String x = Serial.readStringUntil('\n'); x.trim(); if (x.length() == 0) continue; if (x == "WRITE_MACRO_END") break; if (!x.startsWith("A:")) continue; if (x.charAt(2) == 'K') { int p1 = x.indexOf(':', 4); if (p1 < 0) continue; uint8_t mods = (uint8_t) x.substring(4, p1).toInt(); uint8_t token = tokenFromKeyString(x.substring(p1 + 1)); EEPROM.write(p++, ACT_KEY); EEPROM.write(p++, mods); EEPROM.write(p++, token); actions++; combos++; } else if (x.charAt(2) == 'D') { uint16_t ms = (uint16_t) x.substring(4).toInt(); EEPROM.write(p++, ACT_DELAY); EEPROM.write(p++, ms & 0xFF); EEPROM.write(p++, (ms >> 8) & 0xFF); actions++; } }
+    TapHeader h = eepromReadHeader(tap); h.actionsCount = actions; h.combosCount = combos; eepromWriteHeader(tap, h); EEPROM.commit(); sendLine("OK"); return; }
+  if (l.startsWith("SET_APP_CODE:")) { int i1 = l.indexOf(':'), i2 = l.indexOf(':', i1 + 1); uint8_t tap = (uint8_t) l.substring(i1 + 1, i2).toInt(); String code = l.substring(i2 + 1); TapHeader h = eepromReadHeader(tap); uint8_t app = 0; if (code == "Q1") app = 1; else if (code == "Q2") app = 2; else if (code == "Q3") app = 3; else if (code == "Q4") app = 4; h.appCode = app; eepromWriteHeader(tap, h); EEPROM.commit(); sendLine("OK"); return; }
   if (l == "PROG_ACK") { programmingMode = true; digitalWrite(PIN_LED, HIGH); return; }
   if (l == "PROG_EXIT_ACK") { programmingMode = false; digitalWrite(PIN_LED, LOW); return; }
 }
@@ -266,9 +270,9 @@ void setup() {
   button.attachLongPressStart(onLongPressStart); button.attachMultiClick(onMultiClick);
   EEPROM.begin(EEPROM_SIZE);
 #ifdef CLEAR_EEPROM
-  setDefaults();
+  setDefaults(); EEPROM.commit();
 #else
-  if (!checkSignature()) setDefaults();
+  if (!checkSignature()) { setDefaults(); EEPROM.commit(); }
 #endif
   sendLine("HELLO_ARDUINO");
 }
@@ -276,5 +280,6 @@ void setup() {
 void loop() {
   button.tick();
   if (!Serial) { pcConnected = false; }
+  if (pcConnected && (millis() - lastRxMs > PC_SILENCE_TIMEOUT_MS)) { pcConnected = false; }
   while (Serial.available()) { String l = Serial.readStringUntil('\n'); l.trim(); if (l.length() == 0) continue; handleLine(l); }
 }
