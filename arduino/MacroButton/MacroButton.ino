@@ -424,6 +424,8 @@ void setAppCode(uint8_t tap, const String &code) {
 }
 
 void handleLine(const String &l) {
+  // Inbound data implies an active PC connection
+  pcConnected = true;
   if (l == "HELLO_PC") { sendLine("HELLO_ARDUINO"); pcConnected = true; return; }
   if (l == "HELLO_ACK") { pcConnected = true; return; }
   if (l.startsWith("SET_MODE:")) {

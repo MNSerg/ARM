@@ -1025,8 +1025,37 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
 def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
+    # Single-instance guard: use a shared QLocalServer
+    server_name = "com.example.multitap.singleinstance"
+    socket = QtCore.QLocalSocket()
+    socket.connectToServer(server_name)
+    if socket.waitForConnected(100):
+        # Another instance is running: signal it to show and exit
+        try:
+            socket.write(b"SHOW\n")
+            socket.flush()
+            socket.waitForBytesWritten(100)
+        except Exception:
+            pass
+        sys.exit(0)
+    server = QtCore.QLocalServer()
+    try:
+        QtCore.QLocalServer.removeServer(server_name)
+    except Exception:
+        pass
+    server.listen(server_name)
     win = MultiTapWindow()
     win.show()
+    # Bring to front if secondary instance sends SHOW
+    def on_new_conn() -> None:
+        conn = server.nextPendingConnection()
+        if conn and conn.waitForReadyRead(50):
+            _ = conn.readAll()
+            win._restore_from_tray()
+            win.showNormal()
+            win.activateWindow()
+            win.raise_()
+    server.newConnection.connect(on_new_conn)
     sys.exit(app.exec_())
 
 
