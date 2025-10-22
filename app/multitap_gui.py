@@ -546,6 +546,16 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._lost_reported = False
         self.btn_connect.setText("Отключить")
         self.lbl_conn.setText("Подключен")
+        # Refresh ports list and select the connected port
+        self._refresh_ports()
+        # Find item with data == current port_name
+        idx = -1
+        for i in range(self.cb_ports.count()):
+            if self.cb_ports.itemData(i) == port_name:
+                idx = i
+                break
+        if idx >= 0:
+            self.cb_ports.setCurrentIndex(idx)
         # Apply GUI-configured modes to device
         for tap in (1, 2, 3, 4):
             mode = self.tap_configs[tap].mode
@@ -560,6 +570,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self._lost_reported = True
         self.btn_connect.setText("Подключить")
         self.lbl_conn.setText("Не подключен")
+        # Refresh available ports to reflect current state
+        self._refresh_ports()
         # Stop recording if active
         if self.recorder is not None:
             self._stop_record(self.current_tap)
