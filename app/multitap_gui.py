@@ -520,15 +520,12 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self.cb_ports.addItem(label, dev)
             d = (desc or '').lower()
             pref = str(self.settings.value("device_preference", "auto")).lower()
-            if pref == 'micro' and 'arduino micro' in d:
+            if pref == 'micro' and desc == 'Pro Micro':
                 preferred_index = i
-            elif pref == 'esp32c3' and (('esp32' in d) or ('esp32-c3' in d) or ('arduino leonardo' in d)):
+            elif pref in ('esp32s3', 'esp32c3') and desc == 'ESP32S3':
                 preferred_index = i
             elif pref == 'auto' and preferred_index < 0:
-                # choose micro first if seen, otherwise any esp32
-                if 'arduino micro' in d:
-                    preferred_index = i
-                elif (('esp32' in d) or ('esp32-c3' in d) or ('arduino leonardo' in d)):
+                if desc == 'Pro Micro' or desc == 'ESP32S3':
                     preferred_index = i
             i += 1
         if preferred_index >= 0:

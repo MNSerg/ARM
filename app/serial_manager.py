@@ -50,13 +50,28 @@ import queue
 import serial
 from serial import Serial
 from serial.tools import list_ports
-from typing import Callable, Optional, List
+from typing import Callable, Optional, List, Tuple
 
 
 SCAN_INTERVAL_SEC = 0.5
 BAUDRATE = 115200
 READ_TIMEOUT = 0.1   # seconds
 WRITE_TIMEOUT = 2.5  # seconds (increase to avoid intermittent timeouts)
+
+# ---------------- VID/PID for device detection (editable) ----------------
+# Pro Micro / Micro variants
+PRO_MICRO_VID_PID: List[Tuple[int, int]] = [
+    (0x2341, 0x8037),  # Arduino Micro
+    (0x2341, 0x8036),  # Arduino Leonardo/Micro variant
+    (0x1B4F, 0x9206),  # SparkFun Pro Micro 5V/16MHz
+    (0x1B4F, 0x9207),  # SparkFun Pro Micro 3.3V/8MHz
+]
+# ESP32-S3 (TinyUSB CDC) common VID/PID pairs
+ESP32S3_VID_PID: List[Tuple[int, int]] = [
+    (0x303A, 0x1001),
+    (0x303A, 0x1002),
+    (0x303A, 0x0002),
+]
 
 
 class SerialManager:
@@ -89,7 +104,7 @@ class SerialManager:
         self._outbox: "queue.Queue[str]" = queue.Queue()
         self._connected_once_notified = False
         self._autoscan_enabled = True
-        self._device_preference: str = "auto"  # one of: 'auto', 'micro', 'esp32c3'
+        self._device_preference: str = "auto"  # one of: 'auto', 'micro', 'esp32s3'
         # Callbacks
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_connected: Optional[Callable[[str], None]] = None
@@ -136,9 +151,9 @@ class SerialManager:
         self._autoscan_enabled = enabled
 
     def set_device_preference(self, preference: str) -> None:
-        """Set preferred device type for autoscan: 'auto', 'micro', or 'esp32c3'."""
+        """Set preferred device type for autoscan: 'auto', 'micro', or 'esp32s3'."""
         pref = preference.lower().strip()
-        if pref not in ("auto", "micro", "esp32c3"):
+        if pref not in ("auto", "micro", "esp32s3"):
             pref = "auto"
         self._device_preference = pref
 
@@ -164,10 +179,11 @@ class SerialManager:
         return [p.device for p in list_ports.comports()]
 
     def list_ports_with_desc(self) -> List[tuple[str, str]]:
-        """List available ports as (device, description)."""
+        """List available ports as (device, label) where label is 'Pro Micro'/'ESP32S3' or description."""
         result: List[tuple[str, str]] = []
         for p in list_ports.comports():
-            result.append((p.device, p.description or ""))
+            label = self._classify_port_label(p)
+            result.append((p.device, label))
         return result
 
     def try_connect_port(self, port_name: str) -> bool:
@@ -261,23 +277,38 @@ class SerialManager:
                 time.sleep(0.25)
 
     def _auto_scan_attempt(self) -> None:
-        """Scan ports based on preferred device and connect to the first match."""
+        """Scan ports based on preferred device and connect to the first match (VID/PID)."""
         for p in list_ports.comports():
-            desc = (p.description or "").lower()
-            if self._desc_matches_preference(desc):
+            if self._port_matches_preference(p):
                 self.try_connect_port(p.device)
                 return
 
-    def _desc_matches_preference(self, desc: str) -> bool:
-        """Return True if the port description matches the selected device preference."""
-        micro_match = ("arduino micro" in desc)
-        esp_match = ("esp32" in desc) or ("esp32-c3" in desc) or ("arduino leonardo" in desc)
+    def _classify_port_label(self, p) -> str:
+        try:
+            vid = getattr(p, 'vid', None)
+            pid = getattr(p, 'pid', None)
+            if vid is not None and pid is not None:
+                if (vid, pid) in PRO_MICRO_VID_PID:
+                    return "Pro Micro"
+                if (vid, pid) in ESP32S3_VID_PID:
+                    return "ESP32S3"
+        except Exception:
+            pass
+        desc = (p.description or "").lower()
+        if "micro" in desc or "leonardo" in desc:
+            return "Pro Micro"
+        if "esp32" in desc or "esp32-s3" in desc:
+            return "ESP32S3"
+        return p.description or ""
+
+    def _port_matches_preference(self, p) -> bool:
+        label = self._classify_port_label(p)
         if self._device_preference == "micro":
-            return micro_match
-        if self._device_preference == "esp32c3":
-            return esp_match
-        # auto: accept either (prefer micro in GUI preselect logic)
-        return micro_match or esp_match
+            return label == "Pro Micro"
+        if self._device_preference == "esp32s3":
+            return label == "ESP32S3"
+        # auto
+        return label in ("Pro Micro", "ESP32S3")
 
     def _write_now(self, line: str) -> None:
         if not self._ser or not self._ser.is_open:
