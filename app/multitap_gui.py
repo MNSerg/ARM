@@ -424,8 +424,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _toggle_connection_for(self, st: Dict) -> None:
         btn: QtWidgets.QPushButton = st['btn_connect']
-        if self.serial.is_connected():
-            self.serial.disconnect()
+        sm = st['serial']
+        if sm.is_connected():
+            sm.disconnect()
             btn.setText("Подключить")
             st['connected'] = False
             return
@@ -433,7 +434,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         cb: QtWidgets.QComboBox = st['cb_ports']
         port = cb.currentData()
         if port:
-            if self.serial.try_connect_port(port):
+            if sm.try_connect_port(port):
                 btn.setText("Отключить")
                 st['connected'] = True
                 st['current_port'] = port
