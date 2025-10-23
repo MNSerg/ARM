@@ -105,6 +105,7 @@ class SerialManager:
         self._connected_once_notified = False
         self._autoscan_enabled = True
         self._device_preference: str = "auto"  # one of: 'auto', 'micro', 'esp32s3'
+        self._device_id: Optional[str] = None
         # Callbacks
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_connected: Optional[Callable[[str], None]] = None
@@ -162,6 +163,7 @@ class SerialManager:
         was_connected = self.is_connected()
         pn = self._port_name
         self._close_serial()
+        self._device_id = None
         if was_connected:
             if self.on_log:
                 self.on_log(f"Отключено от {pn}")
@@ -225,6 +227,7 @@ class SerialManager:
                 pass
         self._ser = None
         self._port_name = None
+        self._device_id = None
 
     def _reader_loop(self) -> None:
         """Main loop handling auto-scan, sending, and reading lines."""
@@ -331,6 +334,14 @@ class SerialManager:
             if self.on_log:
                 self.on_log("Соединение установлено (HELLO)")
             return
+        if line.startswith("DEVICE_ID:"):
+            try:
+                self._device_id = line.split(":", 1)[1]
+            except Exception:
+                self._device_id = None
+            if self.on_log:
+                self.on_log(f"ID устройства: {self._device_id}")
+            return
         if line.startswith("MODE:"):
             try:
                 _, tap_str, mode_str = line.split(":", 2)
@@ -407,3 +418,8 @@ class SerialManager:
         # Unknown line fallback
         if self.on_log:
             self.on_log(f"SERIAL: {line}")
+
+    # ---------------------- Device info ----------------------
+    def device_id(self) -> Optional[str]:
+        """Return last reported device ID for current connection."""
+        return self._device_id

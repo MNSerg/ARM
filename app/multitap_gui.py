@@ -197,6 +197,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._prog_exit_pending: bool = False
         self._prog_buffer: Optional[List[ActionItem]] = None
         self._prog_source_tab: Optional[int] = None
+        # Keep references to child windows to prevent GC
+        self._child_windows: List[MultiTapWindow] = []
 
         # Restore settings
         self._load_settings()
@@ -278,6 +280,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         file_menu.addAction(act_export)
         act_import.triggered.connect(self._import_from_json)
         act_export.triggered.connect(self._export_to_json)
+        # Devices menu to allow multiple device windows
+        devices_menu = menubar.addMenu("Устройства")
+        act_new_device = QtWidgets.QAction("Добавить кнопку (новое окно)", self)
+        devices_menu.addAction(act_new_device)
+        act_new_device.triggered.connect(self._open_new_device_window)
         settings_menu = menubar.addMenu("Настройки")
         act_settings = QtWidgets.QAction("Открыть настройки", self)
         settings_menu.addAction(act_settings)
@@ -286,6 +293,12 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         act_help = QtWidgets.QAction("Инструкция", self)
         help_menu.addAction(act_help)
         act_help.triggered.connect(self._show_help)
+
+    def _open_new_device_window(self) -> None:
+        # Open another instance window for controlling an additional device
+        w = MultiTapWindow()
+        self._child_windows.append(w)
+        w.show()
 
     def _build_top_bar(self) -> None:
         h = QtWidgets.QHBoxLayout()
@@ -666,7 +679,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.console.log("Вход в режим программирования запрошен")
         # Всегда подтверждаем вход в режим программирования, чтобы LED загорелся
         self.serial.send_line("PROG_ACK")
-        if self.chk_autorun.isChecked():
+        # Setting: when enabled, autoprogram only if Autorun is checked; otherwise always autoprogram
+        requires_autorun = bool(self.settings.value("autoprogram_only_in_autorun", True))
+        allow_auto = self.chk_autorun.isChecked() if requires_autorun else True
+        if allow_auto:
             # Prepare programming buffer and start recording from current tab
             self._prog_buffer = []
             self._prog_source_tab = self.current_tap
@@ -905,6 +921,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         chk_real_delays_default.setChecked(bool(self.settings.value("real_delays_default", False)))
         v.addWidget(chk_real_delays_default)
 
+        # New: Autoprogram gating setting
+        chk_autoprogram_only_in_autorun = QtWidgets.QCheckBox("Автопрограммирование только в авторежиме")
+        chk_autoprogram_only_in_autorun.setToolTip(
+            "Если включено, автозапись начинается только при включенном пункте 'Авторежим'.\n"
+            "Если выключено, автозапись начинается всегда при запросе устройства."
+        )
+        chk_autoprogram_only_in_autorun.setChecked(bool(self.settings.value("autoprogram_only_in_autorun", True)))
+        v.addWidget(chk_autoprogram_only_in_autorun)
+
         # Device preference
         device_pref_label = QtWidgets.QLabel("Устройство для автопоиска:")
         cmb_device_pref = QtWidgets.QComboBox()
@@ -930,6 +955,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self.settings.setValue("autostart_windows", enabled)
             self.settings.setValue("start_minimized", chk_start_minimized.isChecked())
             self.settings.setValue("real_delays_default", chk_real_delays_default.isChecked())
+            self.settings.setValue("autoprogram_only_in_autorun", chk_autoprogram_only_in_autorun.isChecked())
             # Save device preference
             idx = cmb_device_pref.currentIndex()
             pref = 'auto' if idx == 0 else ('micro' if idx == 1 else 'esp32c3')
@@ -1176,3 +1202,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+    
+    

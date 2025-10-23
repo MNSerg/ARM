@@ -9,6 +9,10 @@
 // You may change these at the top section below.
 
 //#define CLEAR_EEPROM  // Uncomment to reset EEPROM to defaults on boot
+// Assign a unique ID per physical button to distinguish devices in GUI logs
+#ifndef DEVICE_ID
+#define DEVICE_ID 1
+#endif
 
 #include <Arduino.h>
 #include <USB.h>
@@ -287,6 +291,8 @@ void setup() {
   if (!checkSignature()) { setDefaults(); EEPROM.commit(); }
 #endif
   sendLine("HELLO_ARDUINO");
+  // Report unique device ID for host identification
+  sendLine(String("DEVICE_ID:") + DEVICE_ID);
 }
 
 void loop() {

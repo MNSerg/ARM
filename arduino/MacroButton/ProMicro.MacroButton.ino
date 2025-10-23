@@ -6,6 +6,10 @@
 
 // ---------------- Configuration ----------------
 //#define CLEAR_EEPROM  // Uncomment to reset EEPROM to defaults on boot
+// Assign a unique ID per physical button to distinguish devices in GUI logs
+#ifndef DEVICE_ID
+#define DEVICE_ID 1
+#endif
 
 #include <Arduino.h>
 #include <Keyboard.h>
@@ -556,6 +560,8 @@ void setup() {
 #endif
 
   sendLine("HELLO_ARDUINO");
+  // Report unique device ID for host identification
+  sendLine(String("DEVICE_ID:") + DEVICE_ID);
 }
 
 void loop() {
