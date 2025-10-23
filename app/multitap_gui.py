@@ -186,7 +186,6 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.device_states: List[Dict] = []
 
         self._build_menu_bar()
-        self._build_top_bar()
         self._build_device_tabs()
         self._build_console()
         self._build_tray()
@@ -300,30 +299,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     
 
     def _build_top_bar(self) -> None:
-        h = QtWidgets.QHBoxLayout()
-        self._vbox.addLayout(h)
-
-        self.cb_ports = QtWidgets.QComboBox()
-        self.btn_refresh = QtWidgets.QPushButton("Обновить")
-        self.btn_connect = QtWidgets.QPushButton("Подключить")
-        self.chk_autorun = QtWidgets.QCheckBox("Авторежим")
-        self.chk_autorun.setChecked(True)
-        #self.btn_settings = QtWidgets.QPushButton("Настройки")
-
-        h.addWidget(QtWidgets.QLabel("COM порт:"))
-        h.addWidget(self.cb_ports, 1)
-        h.addWidget(self.btn_refresh)
-        h.addWidget(self.btn_connect)
-        h.addWidget(self.chk_autorun)
-        #h.addStretch(1)
-        #h.addWidget(self.btn_settings)
-
-        self.btn_refresh.clicked.connect(self._refresh_ports)
-        self.btn_connect.clicked.connect(self._toggle_connection)
-        self.chk_autorun.toggled.connect(self._on_autorun_toggled)
-        #self.btn_settings.clicked.connect(self._open_settings)
-
-        self._refresh_ports()
+        # Deprecated: global top bar removed in favor of per-device controls
+        pass
 
     def _build_device_tabs(self) -> None:
         # Device-level tab widget with a trailing '+' tab
@@ -366,6 +343,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'id': device_id,
             'container': container,
             'pages': inner_pages_map,
+            'inner': inner,
             'tap_configs': {1: TapConfig(), 2: TapConfig(), 3: TapConfig(), 4: TapConfig()},
             'cb_ports': cb_ports,
             'btn_refresh': btn_refresh,
@@ -373,11 +351,18 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'chk_autorun': chk_autorun,
             'connected': False,
             'current_port': None,
+            # Use global serial for now (single connection at a time)
+            'serial': self.serial,
+            # Programming/macro read state per device
+            'reading_tap': None,
+            'prog_exit_pending': False,
+            'prog_buffer': None,
+            'prog_source_tab': None,
         }
         # Wire per-device COM actions
         btn_refresh.clicked.connect(lambda _=False, st=dev_state: self._refresh_ports_for(st))
         btn_connect.clicked.connect(lambda _=False, st=dev_state: self._toggle_connection_for(st))
-        chk_autorun.toggled.connect(lambda checked: self.serial.set_autoscan_enabled(checked))
+        chk_autorun.toggled.connect(lambda checked, s=dev_state: s['serial'].set_autoscan_enabled(checked))
         self.device_states.append(dev_state)
         # Insert before '+' if exists
         idx = self.device_tabs.count()
@@ -420,7 +405,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         cb.clear()
         preferred_index = -1
         i = 0
-        for dev, desc in self.serial.list_ports_with_desc():
+        for dev, desc in st['serial'].list_ports_with_desc():
             label = f"{dev} ({desc})" if desc else dev
             cb.addItem(label, dev)
             d = (desc or '').lower()
@@ -665,40 +650,21 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     # --------------------- Event handlers ---------------------
     def _refresh_ports(self) -> None:
-        self.cb_ports.clear()
-        # Fill with device (description)
-        preferred_index = -1
-        i = 0
-        for dev, desc in self.serial.list_ports_with_desc():
-            label = f"{dev} ({desc})" if desc else dev
-            self.cb_ports.addItem(label, dev)
-            d = (desc or '').lower()
-            pref = str(self.settings.value("device_preference", "auto")).lower()
-            if pref == 'micro' and desc == 'Pro Micro':
-                preferred_index = i
-            elif pref in ('esp32s3', 'esp32c3') and desc == 'ESP32S3':
-                preferred_index = i
-            elif pref == 'auto' and preferred_index < 0:
-                if desc == 'Pro Micro' or desc == 'ESP32S3':
-                    preferred_index = i
-            i += 1
-        if preferred_index >= 0:
-            self.cb_ports.setCurrentIndex(preferred_index)
+        # Deprecated: use _refresh_ports_for per device
+        pass
 
     def _connect_selected(self) -> None:
-        # Current data holds the actual device path
-        port = self.cb_ports.currentData()
-        if port:
-            if self.serial.try_connect_port(port):
-                self.btn_connect.setText("Отключить")
+        # Deprecated: per-device connect is handled via _toggle_connection_for
+        pass
 
     def _on_tab_changed(self, index: int) -> None:
+        # Inner tap change handled via per-device inner tab widgets if needed
         self.current_tap = index + 1
 
     def _on_connected(self, port_name: str) -> None:
         self.console.log(f"Подключено: {port_name}")
         self._lost_reported = False
-        self.btn_connect.setText("Отключить")
+        # Update any per-device button text if needed (best effort)
         self.lbl_conn.setText("Подключен")
         # Refresh ports list and select the connected port
         self._refresh_ports()
