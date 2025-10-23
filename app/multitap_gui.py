@@ -27,6 +27,7 @@ import os
 import sys
 import subprocess
 from typing import List, Dict, Optional, Tuple
+import json
 
 from PyQt5 import QtWidgets, QtGui, QtCore
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
@@ -147,7 +148,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(520, 560)
+        self.resize(480, 540)
         self._apply_dark_theme()
 
         self.serial = SerialManager()
@@ -176,6 +177,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(self._central)
         self._vbox = QtWidgets.QVBoxLayout(self._central)
 
+        self._build_menu_bar()
         self._build_top_bar()
         self._build_tabs()
         self._build_console()
@@ -244,11 +246,33 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             QTabWidget::pane { border: 1px solid #333; background: #202020; }
             QTabBar::tab { background: #2d2d2d; color: #ddd; padding: 6px 12px; }
             QTabBar::tab:selected { background: #3a3a3a; }
+            QMenuBar { background: #2a2a2a; color: #eee; }
+            QMenuBar::item:selected { background: #3a3a3a; }
             QGroupBox { border: 1px solid #333; margin-top: 8px; background: #1e1e1e; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
             QListWidget { background: #1e1e1e; color: #eee; }
             QPlainTextEdit { background: #111; color: #ddd; }
             QPushButton { background-color: #383838; color: #eee; border: 1px solid #444; padding: 6px 10px; }
+    def _build_menu_bar(self) -> None:
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("Файл")
+        act_import = QtWidgets.QAction("Импорт", self)
+        act_export = QtWidgets.QAction("Экспорт", self)
+        file_menu.addAction(act_import)
+        file_menu.addAction(act_export)
+        act_import.triggered.connect(self._import_from_json)
+        act_export.triggered.connect(self._export_to_json)
+
+        settings_menu = menubar.addMenu("Настройки")
+        act_settings = QtWidgets.QAction("Открыть настройки", self)
+        settings_menu.addAction(act_settings)
+        act_settings.triggered.connect(self._open_settings)
+
+        help_menu = menubar.addMenu("Помощь")
+        act_help = QtWidgets.QAction("Инструкция", self)
+        help_menu.addAction(act_help)
+        act_help.triggered.connect(self._show_help)
+
             QPushButton:hover { background-color: #444; }
             QLineEdit { background: #242424; color: #eee; border: 1px solid #444; }
             QComboBox { background: #242424; color: #eee; border: 1px solid #444; }
@@ -270,22 +294,18 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.cb_ports = QtWidgets.QComboBox()
         self.btn_refresh = QtWidgets.QPushButton("Обновить")
         self.btn_connect = QtWidgets.QPushButton("Подключить")
-        self.chk_autorun = QtWidgets.QCheckBox("Авторежим")
+        self.chk_autorun = QtWidgets.QCheckBox("Авторрежим")
         self.chk_autorun.setChecked(True)
-        self.btn_settings = QtWidgets.QPushButton("Настройки")
 
         h.addWidget(QtWidgets.QLabel("COM порт:"))
         h.addWidget(self.cb_ports, 1)
         h.addWidget(self.btn_refresh)
         h.addWidget(self.btn_connect)
         h.addWidget(self.chk_autorun)
-        h.addStretch(1)
-        h.addWidget(self.btn_settings)
 
         self.btn_refresh.clicked.connect(self._refresh_ports)
         self.btn_connect.clicked.connect(self._toggle_connection)
         self.chk_autorun.toggled.connect(self._on_autorun_toggled)
-        self.btn_settings.clicked.connect(self._open_settings)
 
         self._refresh_ports()
 
@@ -920,6 +940,85 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             for t in (1, 2, 3, 4):
                 if t in self.cmb_delay_mode:
                     self.cmb_delay_mode[t].setCurrentIndex(1 if use_real else 0)
+
+    def _show_help(self) -> None:
+        text = (
+            "Использование MultiTap:\n\n"
+            "1) Выберите COM-порт (или включите Авторежим для автопоиска).\n"
+            "2) Выберите вкладку тапа (одинарный/двойной/тройной/четверной).\n"
+            "3) Режим 'Макрос': запишите последовательность (Начать/Остановить), отредактируйте и Запишите.\n"
+            "4) Режим 'Приложение': укажите путь к приложению. Онлайн — запускается приложение, офлайн — исполняется записанный макрос.\n"
+            "5) Длинное нажатие на устройстве — вход в режим программирования; при Авторежиме начнется запись.\n"
+            "6) Выход из программирования — нажмите нужный тап; записанный макрос запишется на выбранный тап.\n"
+            "7) Импорт/Экспорт — в меню Файл для сохранения/загрузки всех настроек и макросов в JSON.\n"
+        )
+        QtWidgets.QMessageBox.information(self, "Помощь", text)
+
+    def _export_to_json(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Экспорт настроек", "multitap_export.json", "JSON (*.json)")
+        if not path:
+            return
+        data: Dict = {
+            "version": 1,
+            "autorun": self.chk_autorun.isChecked(),
+            "taps": {}
+        }
+        for tap in (1,2,3,4):
+            cfg = self.tap_configs[tap]
+            actions = []
+            for a in cfg.actions:
+                if a.action_type == 'key':
+                    actions.append({"type":"key","mods":a.mods,"key":a.key})
+                else:
+                    actions.append({"type":"delay","ms":a.ms})
+            data["taps"][str(tap)] = {
+                "mode": cfg.mode,
+                "app_path": cfg.app_path,
+                "actions": actions,
+            }
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self.console.log("Экспорт: OK")
+        except Exception as e:
+            self.console.log(f"Экспорт ошибка: {e}")
+
+    def _import_from_json(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Импорт настроек", "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # Autorun flag
+            if isinstance(data.get("autorun"), bool):
+                self.chk_autorun.setChecked(data["autorun"])
+            taps = data.get("taps", {})
+            for tap_str, tdata in taps.items():
+                try:
+                    tap = int(tap_str)
+                except Exception:
+                    continue
+                cfg = self.tap_configs.get(tap)
+                if not cfg:
+                    continue
+                cfg.mode = int(tdata.get("mode", cfg.mode))
+                cfg.app_path = str(tdata.get("app_path", cfg.app_path))
+                cfg.actions.clear()
+                for a in tdata.get("actions", []):
+                    if a.get("type") == 'key':
+                        cfg.actions.append(ActionItem('key', mods=int(a.get("mods",0)), key=str(a.get("key",""))))
+                    elif a.get("type") == 'delay':
+                        cfg.actions.append(ActionItem('delay', ms=int(a.get("ms",0))))
+                # Refresh UI per tap
+                page = self.pages[tap]
+                page.rb_macro.setChecked(cfg.mode == TapConfig.MODE_MACRO)  # type: ignore[attr-defined]
+                page.rb_app.setChecked(cfg.mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
+                self.ed_app_path[tap].setText(cfg.app_path)
+                self._refresh_actions_list(tap)
+            self.console.log("Импорт: OK")
+        except Exception as e:
+            self.console.log(f"Импорт ошибка: {e}")
 
     def _apply_windows_autostart(self, enable: bool) -> None:
         if sys.platform.startswith('win'):
