@@ -780,7 +780,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._active_device_state()['serial'].send_line("PROG_ACK")
         # Setting: when enabled, autoprogram only if Autorun is checked; otherwise always autoprogram
         requires_autorun = bool(self.settings.value("autoprogram_only_in_autorun", True))
-        allow_auto = self.chk_autorun.isChecked() if requires_autorun else True
+        allow_auto = self._active_device_state()['chk_autorun'].isChecked() if requires_autorun else True
         if allow_auto:
             # Prepare programming buffer and start recording from current tab
             self._prog_buffer = []
@@ -1098,7 +1098,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             return
         data: Dict = {
             "version": 1,
-            "autorun": self.chk_autorun.isChecked(),
+            "autorun": self._active_device_state()['chk_autorun'].isChecked(),
             "taps": {}
         }
         for tap in (1,2,3,4):
@@ -1130,7 +1130,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 data = json.load(f)
             # Autorun flag
             if isinstance(data.get("autorun"), bool):
-                self.chk_autorun.setChecked(data["autorun"])
+                self._active_device_state()['chk_autorun'].setChecked(data["autorun"])
             taps = data.get("taps", {})
             for tap_str, tdata in taps.items():
                 try:
@@ -1354,8 +1354,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     # --------------------- Settings ---------------------
     def _load_settings(self) -> None:
-        # Autorun
-        self.chk_autorun.setChecked(self.settings.value("autorun", True, type=bool))
+        # Autorun per active device UI (initialize from settings as global default)
+        try:
+            self._active_device_state()['chk_autorun'].setChecked(self.settings.value("autorun", True, type=bool))
+        except Exception:
+            pass
         # App paths and modes
         state = self._active_device_state()
         for tap in (1,2,3,4):
@@ -1370,7 +1373,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             page.ed_app_path.setText(app_path)  # type: ignore[attr-defined]
 
     def _save_settings(self) -> None:
-        self.settings.setValue("autorun", self.chk_autorun.isChecked())
+        try:
+            self.settings.setValue("autorun", self._active_device_state()['chk_autorun'].isChecked())
+        except Exception:
+            pass
         state = self._active_device_state()
         for tap in (1,2,3,4):
             self.settings.setValue(f"tap{tap}/mode", state['tap_configs'][tap].mode)
