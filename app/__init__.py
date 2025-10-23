@@ -1,1 +1,0 @@
-# MultiTap application package
