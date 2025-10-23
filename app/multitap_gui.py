@@ -151,25 +151,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.resize(480, 540)
         self._apply_dark_theme()
 
-        self.serial = SerialManager()
-        self.serial.on_log = self.sig_log.emit
-        self.serial.on_connected = self.sig_connected.emit
-        self.serial.on_disconnected = self.sig_disconnected.emit
-        self.serial.on_tap = self.sig_tap.emit
-        self.serial.on_app_trigger = lambda t, c: self.sig_app_trigger.emit(t, c)
-        self.serial.on_macro_begin = self.sig_macro_begin.emit
-        self.serial.on_macro_action = self.sig_macro_action.emit
-        self.serial.on_macro_end = self.sig_macro_end.emit
-        self.serial.on_mode = lambda t, m: self.sig_mode.emit(t, m)
-        self.serial.on_ok = self.sig_ok.emit
-        self.serial.on_err = self.sig_err.emit
-        self.serial.on_prog_req = self.sig_prog_req.emit
-        self.serial.on_prog_exit_req = self.sig_prog_exit_req.emit
-        # Device identity callback for multi-device tab binding
-        try:
-            self.serial.on_device_id = self._on_device_id  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        # Global serial is no longer used; per-device SerialManager is created per tab
 
         self.console = Console()
         self._lost_reported = False
@@ -214,15 +196,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                         pass
         if bool(self.settings.value("start_minimized", False)):
             QtCore.QTimer.singleShot(0, self.hide)
-        # Apply device preference to serial autoscan
-        device_pref = str(self.settings.value("device_preference", "auto"))
-        self.serial.set_device_preference(device_pref)
+        # Device preference stored for use when creating per-device SerialManager
+        self._device_preference = str(self.settings.value("device_preference", "auto"))
 
         # Connect signals
         self._wire_signals()
 
-        # Start serial manager
-        self.serial.start()
+        # No global serial start; per-device serials will be started on tab creation
 
     # --------------------- UI builders ---------------------
     def _apply_dark_theme(self) -> None:
@@ -459,9 +439,14 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             return
         if self.device_tabs.tabText(index) == "+":
             return
+        # Remove the tab and its state, adjusting for '+' at the end
+        container = self.device_tabs.widget(index)
         self.device_tabs.removeTab(index)
-        if 0 <= index < len(self.device_states):
-            self.device_states.pop(index)
+        # Find and remove matching state by container
+        for i, st in enumerate(list(self.device_states)):
+            if st.get('container') is container:
+                self.device_states.pop(i)
+                break
 
     def _build_tap_page(self, w: QtWidgets.QWidget, tap: int) -> None:
         v = QtWidgets.QVBoxLayout(w)
@@ -677,51 +662,20 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.current_tap = index + 1
 
     def _on_connected(self, port_name: str) -> None:
-        self.console.log(f"Подключено: {port_name}")
-        self._lost_reported = False
-        # Update any per-device button text if needed (best effort)
-        self.lbl_conn.setText("Подключен")
-        # Refresh ports list and select the connected port
-        self._refresh_ports()
-        #Find item with data == current port_name
-        idx = -1
-        for i in range(self.cb_ports.count()):
-            if self.cb_ports.itemData(i) == port_name:
-                idx = i
-                break
-        if idx >= 0:
-            self.cb_ports.setCurrentIndex(idx)
-    # Apply GUI-configured modes to device
-        state = self._active_device_state()
-        for tap in (1, 2, 3, 4):
-            mode = state['tap_configs'][tap].mode
-            state['serial'].send_line(f"SET_MODE:{tap}:{mode}")
-            if mode == TapConfig.MODE_APP:
-                code = f"Q{tap}"  # stable codes Q1/Q2/Q3
-                state['serial'].send_line(f"SET_APP_CODE:{tap}:{code}")
+        # Deprecated: per-device connection handled in _on_connected_for
+        pass
 
     def _on_disconnected(self) -> None:
-        if not self._lost_reported:
-            self.console.log("Потеря связи")
-            self._lost_reported = True
-        self.btn_connect.setText("Подключить")
-        self.lbl_conn.setText("Не подключен")
-        # Refresh available ports to reflect current state
-        self._refresh_ports()
-        # Stop recording if active
-        if self.recorder is not None:
-            self._stop_record(self.current_tap)
+        # Deprecated: per-device disconnect handled in _on_disconnected_for
+        pass
 
     def _toggle_connection(self) -> None:
-        if self.serial.is_connected():
-            self.serial.disconnect()
-            self.btn_connect.setText("Подключить")
-        else:
-            self._connect_selected()
+        # Deprecated: per-device toggle handled in _toggle_connection_for
+        pass
 
     def _on_autorun_toggled(self, checked: bool) -> None:
-        # Autorun also controls autoscan/auto-connect behavior
-        self.serial.set_autoscan_enabled(checked)
+        # Deprecated: handled per-device
+        pass
 
     def _on_app_trigger(self, tap: int, code: str) -> None:
         self.console.log(f"APP_TRIGGER tap={tap} code={code}")
@@ -1226,6 +1180,31 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 self.current_tap = tap
 
     # --------------------- Per-device signal handlers ---------------------
+    def _on_device_id_for(self, st: Dict, device_id: str) -> None:
+        # Attach device ID to first free tab or existing matching tab
+        # If tab already has this ID, ignore
+        if st.get('id') == device_id:
+            return
+        # If any tab has this ID already, disconnect and ignore this stream to avoid conflicts
+        for other in self.device_states:
+            if other is not st and other.get('id') == device_id:
+                self.console.log(f"ID уже закреплён за другой вкладкой: {device_id}")
+                return
+        # If current tab has no ID, assign it
+        if not st.get('id'):
+            st['id'] = device_id
+            idx = self.device_tabs.indexOf(st['container'])
+            if idx >= 0:
+                self.device_tabs.setTabText(idx, self._title_for_device(device_id, idx + 1))
+        else:
+            # Rebind to another free tab if exists
+            for other in self.device_states:
+                if not other.get('id'):
+                    other['id'] = device_id
+                    idx = self.device_tabs.indexOf(other['container'])
+                    if idx >= 0:
+                        self.device_tabs.setTabText(idx, self._title_for_device(device_id, idx + 1))
+                    return
     def _on_connected_for(self, st: Dict, port_name: str) -> None:
         st['connected'] = True
         st['current_port'] = port_name
