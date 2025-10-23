@@ -267,6 +267,16 @@ void executeMacro(uint8_t tap) {
     }
   }
   // Blink LED number of taps
+ /* for (uint8_t i = 0; i < tap; i++) {
+    digitalWrite(PIN_LED, HIGH);
+    delay(100);
+    digitalWrite(PIN_LED, LOW);
+    delay(150);
+  }*/
+}
+
+void Blink_led(int tap) {
+    // Blink LED number of taps
   for (uint8_t i = 0; i < tap; i++) {
     digitalWrite(PIN_LED, HIGH);
     delay(100);
@@ -274,7 +284,6 @@ void executeMacro(uint8_t tap) {
     delay(150);
   }
 }
-
 void setDefaults() {
   // Signature and version
   EEPROM.update(0, 'M');
@@ -491,6 +500,8 @@ void onMultiClick() {
     // Locally clear programming mode and LED
     programmingMode = false;
     digitalWrite(PIN_LED, LOW);
+    delay(100);
+    Blink_led(clicks);
     return;
   }
   // Regular operation (support up to 4 taps)
@@ -502,11 +513,13 @@ void onMultiClick() {
       String code = (h.appCode == 1) ? "Q1" : (h.appCode == 2) ? "Q2" : (h.appCode == 3) ? "Q3" : (h.appCode == 4) ? "Q4" : "Q1";
       sendLine(String("APP_TRIGGER:") + tap + ":" + code);
       sendLine(String("TAP:") + tap);
+      Blink_led(tap);
       return;
     }
     // MODE_MACRO under pcConnected -> execute macro
     executeMacro(tap);
     sendLine(String("TAP:") + tap);
+    Blink_led(tap);
     return;
   }
   // No PC connection: always execute stored macro regardless of mode
@@ -530,6 +543,8 @@ void setup() {
   button.setClickTicks(CLICK_TICKS_MS);
   button.setPressTicks(LONG_PRESS_MS);
   button.attachLongPressStart(onLongPressStart);
+  button.attachClick(onMultiClick);
+  button.attachDoubleClick(onMultiClick);
   button.attachMultiClick(onMultiClick);
 
 #ifdef CLEAR_EEPROM
