@@ -246,29 +246,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             QTabWidget::pane { border: 1px solid #333; background: #202020; }
             QTabBar::tab { background: #2d2d2d; color: #ddd; padding: 6px 12px; }
             QTabBar::tab:selected { background: #3a3a3a; }
-            QGroupBox { border: 1px solid #333; margin-top: 8px; background: #1e1e1e; color: #eee; }
+            QMenuBar { background: #2a2a2a; color: #eee; }
+            QMenuBar::item:selected { background: #3a3a3a; }
+            QGroupBox { border: 1px solid #333; margin-top: 8px; background: #1e1e1e; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
             QListWidget { background: #1e1e1e; color: #eee; }
             QPlainTextEdit { background: #111; color: #ddd; }
             QPushButton { background-color: #383838; color: #eee; border: 1px solid #444; padding: 6px 10px; }
-            QPushButton:hover { background-color: #444; }
-            QLineEdit { background: #242424; color: #eee; border: 1px solid #444; }
-            QComboBox { background: #242424; color: #eee; border: 1px solid #444; }
-            QMenu { background: #2b2b2b; color: #eee; }
-            QMenuBar { background: #2a2a2a; color: #eee; }
-            QMenuBar::item:selected { background: #3a3a3a; }
-            QToolButton { background: #2b2b2b; color: #eee; }
-            QMenu::item:selected { background: #3a3a3a; }
-            QMessageBox { background: #2b2b2b; color: #eee; }
-            QCheckBox { color: #eee; }
-            QLabel { color: #eee; }
-            """
-        )
-
-        font = QtGui.QFont()
-        font.setPointSize(10)
-        app.setFont(font)
-
     def _build_menu_bar(self) -> None:
         menubar = self.menuBar()
         file_menu = menubar.addMenu("Файл")
@@ -278,14 +262,30 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         file_menu.addAction(act_export)
         act_import.triggered.connect(self._import_from_json)
         act_export.triggered.connect(self._export_to_json)
+
         settings_menu = menubar.addMenu("Настройки")
         act_settings = QtWidgets.QAction("Открыть настройки", self)
         settings_menu.addAction(act_settings)
         act_settings.triggered.connect(self._open_settings)
+
         help_menu = menubar.addMenu("Помощь")
         act_help = QtWidgets.QAction("Инструкция", self)
         help_menu.addAction(act_help)
         act_help.triggered.connect(self._show_help)
+
+            QPushButton:hover { background-color: #444; }
+            QLineEdit { background: #242424; color: #eee; border: 1px solid #444; }
+            QComboBox { background: #242424; color: #eee; border: 1px solid #444; }
+            QMenu { background: #2b2b2b; color: #eee; }
+            QMenu::item:selected { background: #3a3a3a; }
+            QCheckBox { color: #eee; }
+            QLabel { color: #eee; }
+            """
+        )
+
+        font = QtGui.QFont()
+        font.setPointSize(10)
+        app.setFont(font)
 
     def _build_top_bar(self) -> None:
         h = QtWidgets.QHBoxLayout()
@@ -294,22 +294,18 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.cb_ports = QtWidgets.QComboBox()
         self.btn_refresh = QtWidgets.QPushButton("Обновить")
         self.btn_connect = QtWidgets.QPushButton("Подключить")
-        self.chk_autorun = QtWidgets.QCheckBox("Авторежим")
+        self.chk_autorun = QtWidgets.QCheckBox("Авторрежим")
         self.chk_autorun.setChecked(True)
-        #self.btn_settings = QtWidgets.QPushButton("Настройки")
 
         h.addWidget(QtWidgets.QLabel("COM порт:"))
         h.addWidget(self.cb_ports, 1)
         h.addWidget(self.btn_refresh)
         h.addWidget(self.btn_connect)
         h.addWidget(self.chk_autorun)
-        #h.addStretch(1)
-        #h.addWidget(self.btn_settings)
 
         self.btn_refresh.clicked.connect(self._refresh_ports)
         self.btn_connect.clicked.connect(self._toggle_connection)
         self.chk_autorun.toggled.connect(self._on_autorun_toggled)
-        #self.btn_settings.clicked.connect(self._open_settings)
 
         self._refresh_ports()
 
@@ -572,7 +568,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.lbl_conn.setText("Подключен")
         # Refresh ports list and select the connected port
         self._refresh_ports()
-        #Find item with data == current port_name
+        # Find item with data == current port_name
         idx = -1
         for i in range(self.cb_ports.count()):
             if self.cb_ports.itemData(i) == port_name:
@@ -580,7 +576,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 break
         if idx >= 0:
             self.cb_ports.setCurrentIndex(idx)
-    # Apply GUI-configured modes to device
+        # Apply GUI-configured modes to device
         for tap in (1, 2, 3, 4):
             mode = self.tap_configs[tap].mode
             self.serial.send_line(f"SET_MODE:{tap}:{mode}")
@@ -944,7 +940,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             for t in (1, 2, 3, 4):
                 if t in self.cmb_delay_mode:
                     self.cmb_delay_mode[t].setCurrentIndex(1 if use_real else 0)
-    
+
     def _show_help(self) -> None:
         text = (
             "Использование MultiTap:\n\n"
@@ -1062,8 +1058,6 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _show_actions_context_menu(self, tap: int, pos: QtCore.QPoint) -> None:
         lst = self.lst_actions[tap]
         menu = QtWidgets.QMenu(lst)
-        menu.addAction("Добавить клавишу", lambda: self._add_key(tap))
-        menu.addAction("Добавить задержку", lambda: self._add_delay(tap))
         menu.addAction("Редактировать", lambda: self._edit_action(tap))
         menu.addAction("Вверх", lambda: self._move_action(tap, -1))
         menu.addAction("Вниз", lambda: self._move_action(tap, +1))
