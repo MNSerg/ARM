@@ -351,14 +351,28 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'chk_autorun': chk_autorun,
             'connected': False,
             'current_port': None,
-            # Use global serial for now (single connection at a time)
-            'serial': self.serial,
+            # Dedicated serial for this device tab
+            'serial': SerialManager(),
             # Programming/macro read state per device
             'reading_tap': None,
             'prog_exit_pending': False,
             'prog_buffer': None,
             'prog_source_tab': None,
         }
+        # Configure per-device serial
+        dev_state['serial'].on_log = self.sig_log.emit
+        dev_state['serial'].on_connected = lambda port, st=dev_state: self._on_connected_for(st, port)
+        dev_state['serial'].on_disconnected = lambda st=dev_state: self._on_disconnected_for(st)
+        dev_state['serial'].on_tap = lambda tap, st=dev_state: self._on_tap_for(st, tap)
+        dev_state['serial'].on_app_trigger = lambda tap, code, st=dev_state: self._on_app_trigger_for(st, tap, code)
+        dev_state['serial'].on_macro_begin = lambda tap, st=dev_state: self._on_macro_begin_for(st, tap)
+        dev_state['serial'].on_macro_action = lambda line, st=dev_state: self._on_macro_action_for(st, line)
+        dev_state['serial'].on_macro_end = lambda tap, st=dev_state: self._on_macro_end_for(st, tap)
+        dev_state['serial'].on_mode = lambda tap, mode, st=dev_state: self._on_mode_for(st, tap, mode)
+        dev_state['serial'].on_ok = self.sig_ok.emit
+        dev_state['serial'].on_err = self.sig_err.emit
+        dev_state['serial'].on_prog_req = lambda st=dev_state: self._on_prog_req_for(st)
+        dev_state['serial'].on_prog_exit_req = lambda st=dev_state: self._on_prog_exit_req_for(st)
         # Wire per-device COM actions
         btn_refresh.clicked.connect(lambda _=False, st=dev_state: self._refresh_ports_for(st))
         btn_connect.clicked.connect(lambda _=False, st=dev_state: self._toggle_connection_for(st))
@@ -681,10 +695,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         state = self._active_device_state()
         for tap in (1, 2, 3, 4):
             mode = state['tap_configs'][tap].mode
-            self.serial.send_line(f"SET_MODE:{tap}:{mode}")
+            state['serial'].send_line(f"SET_MODE:{tap}:{mode}")
             if mode == TapConfig.MODE_APP:
                 code = f"Q{tap}"  # stable codes Q1/Q2/Q3
-                self.serial.send_line(f"SET_APP_CODE:{tap}:{code}")
+                state['serial'].send_line(f"SET_APP_CODE:{tap}:{code}")
 
     def _on_disconnected(self) -> None:
         if not self._lost_reported:
@@ -763,7 +777,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _on_prog_req(self) -> None:
         self.console.log("Вход в режим программирования запрошен")
         # Всегда подтверждаем вход в режим программирования, чтобы LED загорелся
-        self.serial.send_line("PROG_ACK")
+        self._active_device_state()['serial'].send_line("PROG_ACK")
         # Setting: when enabled, autoprogram only if Autorun is checked; otherwise always autoprogram
         requires_autorun = bool(self.settings.value("autoprogram_only_in_autorun", True))
         allow_auto = self.chk_autorun.isChecked() if requires_autorun else True
@@ -777,7 +791,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _on_prog_exit_req(self) -> None:
         self.console.log("Выход из режима программирования запрошен")
-        self.serial.send_line("PROG_EXIT_ACK")
+        self._active_device_state()['serial'].send_line("PROG_EXIT_ACK")
         if self.recorder is not None:
             # Stop recording
             self._stop_record(self.current_tap)
@@ -788,7 +802,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 self._active_device_state()['tap_configs'][target_tap].actions = [ActionItem(a.action_type, a.mods, a.key, a.ms) for a in self._prog_buffer]
                 self._refresh_actions_list(target_tap)
                 # Send SET_MODE to ensure device is in macro mode before write
-                self.serial.send_line(f"SET_MODE:{target_tap}:{TapConfig.MODE_MACRO}")
+                self._active_device_state()['serial'].send_line(f"SET_MODE:{target_tap}:{TapConfig.MODE_MACRO}")
                 self._write_macro_actions(target_tap, self._prog_buffer)
             else:
                 # Fallback: write current tap actions
@@ -802,10 +816,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _on_mode_changed(self, tap: int, macro_checked: bool) -> None:
         cfg = self._active_device_state()['tap_configs'][tap]
         cfg.mode = TapConfig.MODE_MACRO if macro_checked else TapConfig.MODE_APP
-        self.serial.send_line(f"SET_MODE:{tap}:{cfg.mode}")
+        self._active_device_state()['serial'].send_line(f"SET_MODE:{tap}:{cfg.mode}")
         if cfg.mode == TapConfig.MODE_APP:
             code = f"Q{tap}"
-            self.serial.send_line(f"SET_APP_CODE:{tap}:{code}")
+            self._active_device_state()['serial'].send_line(f"SET_APP_CODE:{tap}:{code}")
 
     def _start_record(self, tap: int) -> None:
         if self.recorder is not None:
@@ -954,8 +968,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _read_macro(self, tap: int) -> None:
         # Request current mode and macro
-        self.serial.send_line(f"GET_MODE:{tap}")
-        self.serial.send_line(f"READ_MACRO:{tap}")
+        self._active_device_state()['serial'].send_line(f"GET_MODE:{tap}")
+        self._active_device_state()['serial'].send_line(f"READ_MACRO:{tap}")
 
     def _write_macro(self, tap: int) -> None:
         # Enforce MAX_COMBOS
@@ -963,10 +977,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if len(combos) > MAX_COMBOS:
             self.console.log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
-        self.serial.send_line(f"WRITE_MACRO_BEGIN:{tap}")
+        self._active_device_state()['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
         for a in self._active_device_state()['tap_configs'][tap].actions:
-            self.serial.send_line(a.to_serial_line())
-        self.serial.send_line("WRITE_MACRO_END")
+            self._active_device_state()['serial'].send_line(a.to_serial_line())
+        self._active_device_state()['serial'].send_line("WRITE_MACRO_END")
 
     def _write_macro_actions(self, tap: int, actions: List[ActionItem]) -> None:
         # Enforce MAX_COMBOS
@@ -974,13 +988,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if len(combos) > MAX_COMBOS:
             self.console.log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
-        self.serial.send_line(f"WRITE_MACRO_BEGIN:{tap}")
+        self._active_device_state()['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
         for a in actions:
             # Validate token before sending to device
             if a.action_type == 'key' and a.key not in KEY_TOKENS:
                 continue
-            self.serial.send_line(a.to_serial_line())
-        self.serial.send_line("WRITE_MACRO_END")
+            self._active_device_state()['serial'].send_line(a.to_serial_line())
+        self._active_device_state()['serial'].send_line("WRITE_MACRO_END")
 
     def _browse_app(self, tap: int) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Выбрать приложение", "", "Все файлы (*)")
@@ -991,8 +1005,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             # Inform device of app mode if selected
             page = self._active_device_state()['pages'][tap]
             if page.rb_app.isChecked():  # type: ignore[attr-defined]
-                self.serial.send_line(f"SET_MODE:{tap}:{TapConfig.MODE_APP}")
-                self.serial.send_line(f"SET_APP_CODE:{tap}:Q{tap}")
+                self._active_device_state()['serial'].send_line(f"SET_MODE:{tap}:{TapConfig.MODE_APP}")
+                self._active_device_state()['serial'].send_line(f"SET_APP_CODE:{tap}:Q{tap}")
 
     def _open_settings(self) -> None:
         dlg = QtWidgets.QDialog(self)
@@ -1210,6 +1224,109 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if getattr(self, '_prog_exit_pending', False):
             if tap in (1, 2, 3, 4):
                 self.current_tap = tap
+
+    # --------------------- Per-device signal handlers ---------------------
+    def _on_connected_for(self, st: Dict, port_name: str) -> None:
+        st['connected'] = True
+        st['current_port'] = port_name
+        st['btn_connect'].setText("Отключить")
+        # Apply GUI-configured modes to device
+        for tap in (1, 2, 3, 4):
+            mode = st['tap_configs'][tap].mode
+            st['serial'].send_line(f"SET_MODE:{tap}:{mode}")
+            if mode == TapConfig.MODE_APP:
+                st['serial'].send_line(f"SET_APP_CODE:{tap}:Q{tap}")
+
+    def _on_disconnected_for(self, st: Dict) -> None:
+        if st['connected']:
+            self.console.log("Потеря связи")
+        st['connected'] = False
+        st['btn_connect'].setText("Подключить")
+        if self.recorder is not None:
+            self._stop_record(self.current_tap)
+
+    def _on_tap_for(self, st: Dict, tap: int) -> None:
+        self.console.log(f"Тап: {tap}")
+        if st.get('prog_exit_pending'):
+            if tap in (1, 2, 3, 4):
+                self.current_tap = tap
+
+    def _on_app_trigger_for(self, st: Dict, tap: int, code: str) -> None:
+        self.console.log(f"APP_TRIGGER tap={tap} code={code}")
+        path = st['tap_configs'].get(tap, TapConfig()).app_path
+        if path and os.path.exists(path):
+            try:
+                if sys.platform.startswith('win'):
+                    os.startfile(path)  # type: ignore[attr-defined]
+                else:
+                    subprocess.Popen([path], start_new_session=True)
+                self.console.log("Запуск приложения: OK")
+            except Exception as e:
+                self.console.log(f"Ошибка запуска приложения: {e}")
+        else:
+            self.console.log("Путь к приложению не задан или не существует")
+
+    def _on_macro_begin_for(self, st: Dict, tap: int) -> None:
+        st['reading_tap'] = tap
+        st['tap_configs'][tap].clear()
+        self._refresh_actions_list(tap)
+
+    def _on_macro_action_for(self, st: Dict, line: str) -> None:
+        try:
+            parts = line.split(":")
+            if parts[1] == 'K':
+                mods = int(parts[2]); key = parts[3]
+                target_tap = st.get('reading_tap') or self.current_tap
+                st['tap_configs'][target_tap].actions.append(ActionItem('key', mods=mods, key=key))
+            elif parts[1] == 'D':
+                ms = int(parts[2])
+                target_tap = st.get('reading_tap') or self.current_tap
+                st['tap_configs'][target_tap].actions.append(ActionItem('delay', ms=ms))
+            self._refresh_actions_list(st.get('reading_tap') or self.current_tap)
+        except Exception:
+            pass
+
+    def _on_macro_end_for(self, st: Dict, tap: int) -> None:
+        self.console.log(f"Считан макрос для тапа {tap}")
+        st['reading_tap'] = None
+        self.lbl_op.setText("ОК")
+
+    def _on_mode_for(self, st: Dict, tap: int, mode: int) -> None:
+        cfg = st['tap_configs'][tap]
+        cfg.mode = mode
+        page = st['pages'][tap]
+        page.rb_macro.setChecked(mode == TapConfig.MODE_MACRO)  # type: ignore[attr-defined]
+        page.rb_app.setChecked(mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
+        self.console.log(f"Режим тапа {tap}: {'Макрос' if mode==1 else 'Приложение'}")
+        self.lbl_op.setText("ОК")
+
+    def _on_prog_req_for(self, st: Dict) -> None:
+        self.console.log("Вход в режим программирования запрошен")
+        st['serial'].send_line("PROG_ACK")
+        requires_autorun = bool(self.settings.value("autoprogram_only_in_autorun", True))
+        allow_auto = st['chk_autorun'].isChecked() if requires_autorun else True
+        if allow_auto:
+            st['prog_buffer'] = []
+            st['prog_source_tab'] = self.current_tap
+            self._start_record(self.current_tap)
+            st['prog_exit_pending'] = True
+
+    def _on_prog_exit_req_for(self, st: Dict) -> None:
+        self.console.log("Выход из режима программирования запрошен")
+        st['serial'].send_line("PROG_EXIT_ACK")
+        if self.recorder is not None:
+            self._stop_record(self.current_tap)
+            target_tap = self.current_tap
+            if st.get('prog_buffer') and len(st['prog_buffer']) > 0:
+                st['tap_configs'][target_tap].actions = [ActionItem(a.action_type, a.mods, a.key, a.ms) for a in st['prog_buffer']]  # type: ignore[index]
+                self._refresh_actions_list(target_tap)
+                st['serial'].send_line(f"SET_MODE:{target_tap}:{TapConfig.MODE_MACRO}")
+                self._write_macro_actions(target_tap, st['prog_buffer'])  # type: ignore[arg-type]
+            else:
+                self._write_macro(target_tap)
+        st['prog_exit_pending'] = False
+        st['prog_buffer'] = None
+        st['prog_source_tab'] = None
 
     def _on_device_id(self, device_id: str) -> None:
         # Bind or create a device tab for this Device ID
