@@ -182,6 +182,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(self._central)
         self._vbox = QtWidgets.QVBoxLayout(self._central)
 
+        # Multi-device state must be initialized before building tabs
+        self.device_states: List[Dict] = []
+
         self._build_menu_bar()
         self._build_top_bar()
         self._build_device_tabs()
@@ -190,7 +193,6 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._build_status_bar()
 
         # State
-        self.device_states: List[Dict] = []
         self.current_tap = 1
         self.recorder: Optional[MacroRecorder] = None
         self._reading_tap: Optional[int] = None
