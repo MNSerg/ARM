@@ -165,6 +165,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.serial.on_err = self.sig_err.emit
         self.serial.on_prog_req = self.sig_prog_req.emit
         self.serial.on_prog_exit_req = self.sig_prog_exit_req.emit
+        # Device identity callback for multi-device tab binding
+        try:
+            self.serial.on_device_id = self._on_device_id  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         self.console = Console()
         self._lost_reported = False
@@ -199,8 +204,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._load_settings()
         # Apply settings after load
         if bool(self.settings.value("real_delays_default", False)):
+            # Apply default delay mode for current active device's pages
+            st = self._active_device_state()
             for tap in (1,2,3,4):
-                self.cmb_delay_mode[tap].setCurrentIndex(1)
+                try:
+                    st['pages'][tap].cmb_delay.setCurrentIndex(1)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
         if bool(self.settings.value("start_minimized", False)):
             QtCore.QTimer.singleShot(0, self.hide)
         # Apply device preference to serial autoscan
@@ -275,11 +285,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         file_menu.addAction(act_export)
         act_import.triggered.connect(self._import_from_json)
         act_export.triggered.connect(self._export_to_json)
-        # Devices menu to allow multiple device windows
-        devices_menu = menubar.addMenu("Устройства")
-        act_new_device = QtWidgets.QAction("Добавить кнопку (новое окно)", self)
-        devices_menu.addAction(act_new_device)
-        act_new_device.triggered.connect(self._open_new_device_window)
+        # Devices handled via tabs with '+'
         settings_menu = menubar.addMenu("Настройки")
         act_settings = QtWidgets.QAction("Открыть настройки", self)
         settings_menu.addAction(act_settings)
@@ -289,11 +295,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         help_menu.addAction(act_help)
         act_help.triggered.connect(self._show_help)
 
-    def _open_new_device_window(self) -> None:
-        # Open another instance window for controlling an additional device
-        w = MultiTapWindow()
-        self._child_windows.append(w)
-        w.show()
+    
 
     def _build_top_bar(self) -> None:
         h = QtWidgets.QHBoxLayout()
@@ -396,11 +398,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         v.addWidget(macro_group, 2)
         mv = QtWidgets.QVBoxLayout(macro_group)
 
-        self.lst_actions = getattr(self, 'lst_actions', None)
-        if self.lst_actions is None:
-            self.lst_actions = {}
+        # Actions list (page-scoped)
         lst = QtWidgets.QListWidget()
-        self.lst_actions[tap] = lst
+        # attach to page for per-device addressing
+        w.lst_actions = lst  # type: ignore[attr-defined]
         mv.addWidget(lst, 1)
         # Context menu for actions list
         lst.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -424,12 +425,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         delay_h = QtWidgets.QHBoxLayout()
         mv.addLayout(delay_h)
         delay_h.addWidget(QtWidgets.QLabel("Задержки при записи:"))
-        self.cmb_delay_mode = getattr(self, 'cmb_delay_mode', None)
-        if self.cmb_delay_mode is None:
-            self.cmb_delay_mode = {}
         cmb_delay = QtWidgets.QComboBox()
         cmb_delay.addItems(["10 мс (по-умолчанию)", "Реальные задержки"])
-        self.cmb_delay_mode[tap] = cmb_delay
+        # attach to page
+        w.cmb_delay = cmb_delay  # type: ignore[attr-defined]
         delay_h.addWidget(cmb_delay)
 
         # Collapsible edit menu (three-dots)
@@ -495,16 +494,12 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         app_group = QtWidgets.QGroupBox("Приложение для запуска")
         v.addWidget(app_group)
         ah = QtWidgets.QHBoxLayout(app_group)
-        self.ed_app_path = getattr(self, 'ed_app_path', None)
-        self.btn_browse = getattr(self, 'btn_browse', None)
-        if self.ed_app_path is None:
-            self.ed_app_path = {}
-            self.btn_browse = {}
         ed = QtWidgets.QLineEdit()
         ed.setPlaceholderText("Путь к приложению...")
         btn_browse = QtWidgets.QPushButton("Обзор")
-        self.ed_app_path[tap] = ed
-        self.btn_browse[tap] = btn_browse
+        # attach to page
+        w.ed_app_path = ed      # type: ignore[attr-defined]
+        w.btn_browse = btn_browse  # type: ignore[attr-defined]
         ah.addWidget(ed, 1)
         ah.addWidget(btn_browse)
 
@@ -739,8 +734,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             target_tap = self.current_tap
             # If we have a programming buffer, write it to the target tap and copy to GUI list
             if self._prog_buffer is not None and len(self._prog_buffer) > 0:
-                # Copy buffer into target tap list for UI consistency
-                self.tap_configs[target_tap].actions = [ActionItem(a.action_type, a.mods, a.key, a.ms) for a in self._prog_buffer]
+                # Copy buffer into target tap list for UI consistency (active device)
+                self._active_device_state()['tap_configs'][target_tap].actions = [ActionItem(a.action_type, a.mods, a.key, a.ms) for a in self._prog_buffer]
                 self._refresh_actions_list(target_tap)
                 # Send SET_MODE to ensure device is in macro mode before write
                 self.serial.send_line(f"SET_MODE:{target_tap}:{TapConfig.MODE_MACRO}")
@@ -755,7 +750,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     # --------------------- Mode and actions ---------------------
     def _on_mode_changed(self, tap: int, macro_checked: bool) -> None:
-        cfg = self.tap_configs[tap]
+        cfg = self._active_device_state()['tap_configs'][tap]
         cfg.mode = TapConfig.MODE_MACRO if macro_checked else TapConfig.MODE_APP
         self.serial.send_line(f"SET_MODE:{tap}:{cfg.mode}")
         if cfg.mode == TapConfig.MODE_APP:
@@ -770,7 +765,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         cfg = self._active_device_state()['tap_configs'][tap]
         cfg.clear()
         self._refresh_actions_list(tap)
-        use_real = self.cmb_delay_mode[tap].currentIndex() == 1
+        page = self._active_device_state()['pages'][tap]
+        use_real = page.cmb_delay.currentIndex() == 1  # type: ignore[attr-defined]
         rec = MacroRecorder(use_real_delays=use_real)
         self.recorder = rec
 
@@ -807,13 +803,16 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.lbl_rec.setText("Запись: выкл")
 
     def _refresh_actions_list(self, tap: int) -> None:
-        lst = self.lst_actions[tap]
+        # Resolve actions list within the active device tab's page
+        page = self._active_device_state()['pages'][tap]
+        lst = page.lst_actions  # type: ignore[attr-defined]
         lst.clear()
         for a in self._active_device_state()['tap_configs'][tap].actions:
             lst.addItem(a.to_display())
 
     def _selected_action_index(self, tap: int) -> int:
-        lst = self.lst_actions[tap]
+        page = self._active_device_state()['pages'][tap]
+        lst = page.lst_actions  # type: ignore[attr-defined]
         sel = lst.selectedIndexes()
         return sel[0].row() if sel else -1
 
@@ -877,7 +876,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             return
         actions[idx], actions[j] = actions[j], actions[idx]
         self._refresh_actions_list(tap)
-        self.lst_actions[tap].setCurrentRow(j)
+        page = self._active_device_state()['pages'][tap]
+        page.lst_actions.setCurrentRow(j)  # type: ignore[attr-defined]
 
     def _delete_action(self, tap: int) -> None:
         idx = self._selected_action_index(tap)
@@ -909,7 +909,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _write_macro(self, tap: int) -> None:
         # Enforce MAX_COMBOS
-        combos = [a for a in self.tap_configs[tap].actions if a.action_type == 'key']
+        combos = [a for a in self._active_device_state()['tap_configs'][tap].actions if a.action_type == 'key']
         if len(combos) > MAX_COMBOS:
             self.console.log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
@@ -935,7 +935,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _browse_app(self, tap: int) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Выбрать приложение", "", "Все файлы (*)")
         if path:
-            self.ed_app_path[tap].setText(path)
+            page = self._active_device_state()['pages'][tap]
+            page.ed_app_path.setText(path)  # type: ignore[attr-defined]
             self._active_device_state()['tap_configs'][tap].app_path = path
             # Inform device of app mode if selected
             page = self._active_device_state()['pages'][tap]
@@ -962,7 +963,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         v.addWidget(chk_real_delays_default)
 
         # New: Autoprogram gating setting
-        chk_autoprogram_only_in_autorun = QtWidgets.QCheckBox("Автопрограммирование только в авторежиме")
+        chk_autoprogram_only_in_autorun = QtWidgets.QCheckBox("Автопрограммирование работает только в автоматическом режиме")
         chk_autoprogram_only_in_autorun.setToolTip(
             "Если включено, автозапись начинается только при включенном пункте 'Авторежим'.\n"
             "Если выключено, автозапись начинается всегда при запросе устройства."
@@ -1034,7 +1035,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             "taps": {}
         }
         for tap in (1,2,3,4):
-            cfg = self.tap_configs[tap]
+            cfg = self._active_device_state()['tap_configs'][tap]
             actions = []
             for a in cfg.actions:
                 if a.action_type == 'key':
@@ -1081,10 +1082,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                     elif a.get("type") == 'delay':
                         cfg.actions.append(ActionItem('delay', ms=int(a.get("ms",0))))
                 # Refresh UI per tap
-                page = self.pages[tap]
+                page = self._active_device_state()['pages'][tap]
                 page.rb_macro.setChecked(cfg.mode == TapConfig.MODE_MACRO)  # type: ignore[attr-defined]
                 page.rb_app.setChecked(cfg.mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
-                self.ed_app_path[tap].setText(cfg.app_path)
+                page = self._active_device_state()['pages'][tap]
+                page.ed_app_path.setText(cfg.app_path)  # type: ignore[attr-defined]
                 self._refresh_actions_list(tap)
             self.console.log("Импорт: OK")
         except Exception as e:
@@ -1120,13 +1122,14 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             idx = self._selected_action_index(tap)
             new_action = ActionItem('key', mods=mods, key=key)
             if idx < 0:
-                self.tap_configs[tap].actions.append(new_action)
+                self._active_device_state()['tap_configs'][tap].actions.append(new_action)
             else:
-                self.tap_configs[tap].actions.insert(idx + 1, new_action)
+                self._active_device_state()['tap_configs'][tap].actions.insert(idx + 1, new_action)
             self._refresh_actions_list(tap)
 
     def _show_actions_context_menu(self, tap: int, pos: QtCore.QPoint) -> None:
-        lst = self.lst_actions[tap]
+        page = self._active_device_state()['pages'][tap]
+        lst = page.lst_actions  # type: ignore[attr-defined]
         menu = QtWidgets.QMenu(lst)
         menu.addAction("Добавить клавишу", lambda: self._add_key(tap))
         menu.addAction("Добавить задержку", lambda: self._add_delay(tap))
@@ -1193,7 +1196,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             page.rb_app.setChecked(mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
             app_path = self.settings.value(f"tap{tap}/app_path", "", type=str)
             state['tap_configs'][tap].app_path = app_path
-            self.ed_app_path[tap].setText(app_path)
+            page = self._active_device_state()['pages'][tap]
+            page.ed_app_path.setText(app_path)  # type: ignore[attr-defined]
 
     def _save_settings(self) -> None:
         self.settings.setValue("autorun", self.chk_autorun.isChecked())
