@@ -206,13 +206,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self._load_settings()
         # Apply settings after load
         if bool(self.settings.value("real_delays_default", False)):
-            # Apply default delay mode for current active device's pages
-            st = self._active_device_state()
-            for tap in (1,2,3,4):
-                try:
-                    st['pages'][tap].cmb_delay.setCurrentIndex(1)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
+            # Apply default delay mode for all device pages
+            for st in self.device_states:
+                for tap in (1,2,3,4):
+                    try:
+                        st['pages'][tap].cmb_delay.setCurrentIndex(1)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
         if bool(self.settings.value("start_minimized", False)):
             QtCore.QTimer.singleShot(0, self.hide)
         # Apply device preference to serial autoscan
@@ -330,13 +330,31 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.device_tabs = QtWidgets.QTabWidget()
         self._vbox.addWidget(self.device_tabs, 1)
         self.device_tabs.currentChanged.connect(self._on_device_tab_changed)
+        self.device_tabs.setTabsClosable(True)
+        self.device_tabs.tabCloseRequested.connect(self._close_device_tab)
         self._add_device_tab()  # create first device tab
         self._add_plus_tab()
 
     def _add_device_tab(self, device_id: Optional[str] = None) -> None:
+        # Container for per-device COM controls and inner tap pages
+        container = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(container)
+        # Per-device COM controls row
+        com_row = QtWidgets.QHBoxLayout()
+        v.addLayout(com_row)
+        com_row.addWidget(QtWidgets.QLabel("COM порт:"))
+        cb_ports = QtWidgets.QComboBox()
+        btn_refresh = QtWidgets.QPushButton("Обновить")
+        btn_connect = QtWidgets.QPushButton("Подключить")
+        chk_autorun = QtWidgets.QCheckBox("Авторежим")
+        chk_autorun.setChecked(True)
+        com_row.addWidget(cb_ports, 1)
+        com_row.addWidget(btn_refresh)
+        com_row.addWidget(btn_connect)
+        com_row.addWidget(chk_autorun)
+        # Inner tabs for taps
         inner = QtWidgets.QTabWidget()
-        state_pages: Dict[int, QtWidgets.QWidget] = {}
-        # Per-device controls storage
+        v.addWidget(inner, 1)
         inner_pages_map: Dict[int, QtWidgets.QWidget] = {}
         for tap, title in [(1, "Одиночный тап"), (2, "Двойной тап"), (3, "Тройной тап"), (4, "Четверной тап")]:
             w = QtWidgets.QWidget()
@@ -346,18 +364,31 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         # Save device state structure
         dev_state = {
             'id': device_id,
+            'container': container,
             'pages': inner_pages_map,
             'tap_configs': {1: TapConfig(), 2: TapConfig(), 3: TapConfig(), 4: TapConfig()},
+            'cb_ports': cb_ports,
+            'btn_refresh': btn_refresh,
+            'btn_connect': btn_connect,
+            'chk_autorun': chk_autorun,
+            'connected': False,
+            'current_port': None,
         }
+        # Wire per-device COM actions
+        btn_refresh.clicked.connect(lambda _=False, st=dev_state: self._refresh_ports_for(st))
+        btn_connect.clicked.connect(lambda _=False, st=dev_state: self._toggle_connection_for(st))
+        chk_autorun.toggled.connect(lambda checked: self.serial.set_autoscan_enabled(checked))
         self.device_states.append(dev_state)
-        idx = self.device_tabs.count()
         # Insert before '+' if exists
+        idx = self.device_tabs.count()
         plus_idx = self._plus_tab_index()
         if plus_idx is None:
-            self.device_tabs.insertTab(idx, inner, self._title_for_device(device_id, len(self.device_states)))
+            self.device_tabs.insertTab(idx, container, self._title_for_device(device_id, len(self.device_states)))
         else:
-            self.device_tabs.insertTab(plus_idx, inner, self._title_for_device(device_id, len(self.device_states)))
-        self.device_tabs.setCurrentIndex(self.device_tabs.indexOf(inner))
+            self.device_tabs.insertTab(plus_idx, container, self._title_for_device(device_id, len(self.device_states)))
+        self.device_tabs.setCurrentIndex(self.device_tabs.indexOf(container))
+        # Initial port list
+        self._refresh_ports_for(dev_state)
 
     def _title_for_device(self, device_id: Optional[str], ordinal: int) -> str:
         return f"Кнопка {device_id}" if device_id else f"Кнопка №{ordinal}"
@@ -381,6 +412,56 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             # Ensure '+' remains last
             self.device_tabs.setCurrentIndex(self.device_tabs.count() - 2)
             return
+
+    # --------------------- Per-device COM handling ---------------------
+    def _refresh_ports_for(self, st: Dict) -> None:
+        cb: QtWidgets.QComboBox = st['cb_ports']
+        cb.blockSignals(True)
+        cb.clear()
+        preferred_index = -1
+        i = 0
+        for dev, desc in self.serial.list_ports_with_desc():
+            label = f"{dev} ({desc})" if desc else dev
+            cb.addItem(label, dev)
+            d = (desc or '').lower()
+            pref = str(self.settings.value("device_preference", "auto")).lower()
+            if pref == 'micro' and desc == 'Pro Micro':
+                preferred_index = i
+            elif pref in ('esp32s3', 'esp32c3') and desc == 'ESP32S3':
+                preferred_index = i
+            elif pref == 'auto' and preferred_index < 0:
+                if desc == 'Pro Micro' or desc == 'ESP32S3':
+                    preferred_index = i
+            i += 1
+        if preferred_index >= 0:
+            cb.setCurrentIndex(preferred_index)
+        cb.blockSignals(False)
+
+    def _toggle_connection_for(self, st: Dict) -> None:
+        btn: QtWidgets.QPushButton = st['btn_connect']
+        if self.serial.is_connected():
+            self.serial.disconnect()
+            btn.setText("Подключить")
+            st['connected'] = False
+            return
+        # connect to selected
+        cb: QtWidgets.QComboBox = st['cb_ports']
+        port = cb.currentData()
+        if port:
+            if self.serial.try_connect_port(port):
+                btn.setText("Отключить")
+                st['connected'] = True
+                st['current_port'] = port
+
+    def _close_device_tab(self, index: int) -> None:
+        # Do not remove '+' or the first device tab
+        if index <= 0:
+            return
+        if self.device_tabs.tabText(index) == "+":
+            return
+        self.device_tabs.removeTab(index)
+        if 0 <= index < len(self.device_states):
+            self.device_states.pop(index)
 
     def _build_tap_page(self, w: QtWidgets.QWidget, tap: int) -> None:
         v = QtWidgets.QVBoxLayout(w)
@@ -1008,11 +1089,14 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self._apply_windows_autostart(enabled)
             self.serial.set_device_preference(pref)
             self._refresh_ports()
-            # Update delay mode combos on all tabs to reflect the new default immediately
+            # Update delay mode combos on all device tabs to reflect the new default immediately
             use_real = chk_real_delays_default.isChecked()
-            for t in (1, 2, 3, 4):
-                if t in self.cmb_delay_mode:
-                    self.cmb_delay_mode[t].setCurrentIndex(1 if use_real else 0)
+            for st in self.device_states:
+                for t in (1, 2, 3, 4):
+                    try:
+                        st['pages'][t].cmb_delay.setCurrentIndex(1 if use_real else 0)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
     
     def _show_help(self) -> None:
         text = (
