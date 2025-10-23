@@ -20,7 +20,7 @@
 #include <string.h>
 
 // ---------------- Pins (adjust as needed) ----------------
-const uint8_t PIN_LED = 10;
+const uint8_t PIN_LED = 9;
 const uint8_t PIN_BUTTON = 7;
 
 // ---------------- Timing ----------------
@@ -71,10 +71,10 @@ const unsigned long PC_SILENCE_TIMEOUT_MS = 1500;
 // -------------------- Wake-on-LAN (WOL) settings --------------------
 // Libraries required: USB, USBHIDKeyboard, EEPROM, OneButton, WiFi, WiFiUdp
 #define WOL_ENABLED 1
-const char* WIFI_SSID = "YourSSID";      // TODO: set SSID
-const char* WIFI_PASS = "YourPassword";  // TODO: set password
+const char* WIFI_SSID = "TP-Link-663C-5G";      // TODO: set SSID
+const char* WIFI_PASS = "61930748";  // TODO: set password
 const uint8_t WOL_TARGET_MAC[6] = { 0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33 }; // PC NIC MAC to wake
-const char* WOL_BROADCAST_IP = "255.255.255.255"; // or your subnet broadcast, e.g., "192.168.1.255"
+const char* WOL_BROADCAST_IP = "192.168.1.255"; // or your subnet broadcast, e.g., "192.168.1.255"
 const uint16_t WOL_PORT = 9; // common: 9 or 7
 
 // ---------------- Serial helpers ----------------
@@ -192,7 +192,7 @@ void executeMacro(uint8_t tap) {
       else { delay(h.defaultDelayMs); }
     }
   }
-  for (uint8_t i = 0; i < tap; i++) { digitalWrite(PIN_LED, HIGH); delay(100); digitalWrite(PIN_LED, LOW); delay(150); }
+  Blink_led(tap);
 }
 
 // ---------------- Defaults ----------------
@@ -248,9 +248,19 @@ void onLongPressStart() {
   sendLine("PROG_REQ");
 }
 
+void Blink_led(int tap) {
+    // Blink LED number of taps
+  for (uint8_t i = 0; i < tap; i++) {
+    digitalWrite(PIN_LED, HIGH);
+    delay(100);
+    digitalWrite(PIN_LED, LOW);
+    delay(150);
+  }
+}
+
 void onMultiClick() {
   uint8_t clicks = button.getNumberClicks(); if (clicks == 0) return;
-  if (programmingMode) { sendLine(String("PROG_EXIT_TAPS:") + clicks); programmingMode = false; digitalWrite(PIN_LED, LOW); return; }
+  if (programmingMode) { sendLine(String("PROG_EXIT_TAPS:") + clicks); programmingMode = false; digitalWrite(PIN_LED, LOW); delay(100); Blink_led(clicks); return; }
   uint8_t tap = clicks > 4 ? 4 : clicks;
   TapHeader h = eepromReadHeader(tap);
   if (pcConnected) { if (h.mode == MODE_APP) { String code = (h.appCode == 1) ? "Q1" : (h.appCode == 2) ? "Q2" : (h.appCode == 3) ? "Q3" : (h.appCode == 4) ? "Q4" : "Q1"; sendLine(String("APP_TRIGGER:") + tap + ":" + code); sendLine(String("TAP:") + tap); return; } executeMacro(tap); sendLine(String("TAP:") + tap); return; }
@@ -267,6 +277,8 @@ void setup() {
   // OneButton 2.x: prefer setClickMs/setPressMs
   button.setClickMs(CLICK_TICKS_MS);
   button.setPressMs(LONG_PRESS_MS);
+  button.attachClick(onMultiClick);
+  button.attachDoubleClick(onMultiClick);
   button.attachLongPressStart(onLongPressStart); button.attachMultiClick(onMultiClick);
   EEPROM.begin(EEPROM_SIZE);
 #ifdef CLEAR_EEPROM
@@ -280,6 +292,6 @@ void setup() {
 void loop() {
   button.tick();
   if (!Serial) { pcConnected = false; }
-  if (pcConnected && (millis() - lastRxMs > PC_SILENCE_TIMEOUT_MS)) { pcConnected = false; }
+  //if (pcConnected && (millis() - lastRxMs > PC_SILENCE_TIMEOUT_MS)) { pcConnected = false; }
   while (Serial.available()) { String l = Serial.readStringUntil('\n'); l.trim(); if (l.length() == 0) continue; handleLine(l); }
 }
