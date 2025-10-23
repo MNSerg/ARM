@@ -106,6 +106,8 @@ class SerialManager:
         self._autoscan_enabled = True
         self._device_preference: str = "auto"  # one of: 'auto', 'micro', 'esp32s3'
         self._device_id: Optional[str] = None
+        self._desired_device_id: Optional[str] = None
+        self._port_blacklist: dict[str, float] = {}
         # Callbacks
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_connected: Optional[Callable[[str], None]] = None
@@ -120,6 +122,7 @@ class SerialManager:
         self.on_prog_exit_req: Optional[Callable[[], None]] = None
         self.on_ok: Optional[Callable[[], None]] = None
         self.on_err: Optional[Callable[[str], None]] = None
+        self.on_device_id: Optional[Callable[[str], None]] = None
 
     # ---------------------- Public API ----------------------
     def start(self) -> None:
@@ -187,6 +190,10 @@ class SerialManager:
             label = self._classify_port_label(p)
             result.append((p.device, label))
         return result
+
+    def set_desired_device_id(self, device_id: Optional[str]) -> None:
+        """Set the desired device ID to match when auto-connecting. If set, mismatched IDs will disconnect and scan further."""
+        self._desired_device_id = device_id
 
     def try_connect_port(self, port_name: str) -> bool:
         """Attempt connection to the given port.
@@ -280,10 +287,18 @@ class SerialManager:
                 time.sleep(0.25)
 
     def _auto_scan_attempt(self) -> None:
-        """Scan ports based on preferred device and connect to the first match (VID/PID)."""
+        """Scan ports based on preferred device and connect to the first match (VID/PID), honoring temporary blacklist."""
+        now = time.time()
+        # Cleanup expired blacklist entries
+        expired = [port for port, until in self._port_blacklist.items() if until <= now]
+        for port in expired:
+            self._port_blacklist.pop(port, None)
         for p in list_ports.comports():
-            if self._port_matches_preference(p):
-                self.try_connect_port(p.device)
+            if not self._port_matches_preference(p):
+                continue
+            if p.device in self._port_blacklist:
+                continue
+            if self.try_connect_port(p.device):
                 return
 
     def _classify_port_label(self, p) -> str:
@@ -341,6 +356,21 @@ class SerialManager:
                 self._device_id = None
             if self.on_log:
                 self.on_log(f"ID устройства: {self._device_id}")
+            if self.on_device_id and self._device_id is not None:
+                try:
+                    self.on_device_id(self._device_id)
+                except Exception:
+                    pass
+            # If a specific device ID is desired and this one does not match, disconnect and blacklist this port for a short time
+            if self._desired_device_id and self._device_id and self._device_id != self._desired_device_id:
+                pn = self._port_name
+                if self.on_log:
+                    self.on_log(f"Отклонено устройство с ID {self._device_id}, ожидается {self._desired_device_id}")
+                self._close_serial()
+                if pn:
+                    self._port_blacklist[pn] = time.time() + 5.0
+                if self.on_disconnected:
+                    self.on_disconnected()
             return
         if line.startswith("MODE:"):
             try:
