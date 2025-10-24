@@ -947,14 +947,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _write_macro(self, tap: int) -> None:
         # Enforce MAX_COMBOS
-        combos = [a for a in self._active_device_state()['tap_configs'][tap].actions if a.action_type == 'key']
+        st = self._active_device_state()
+        combos = [a for a in st['tap_configs'][tap].actions if a.action_type == 'key']
         if len(combos) > MAX_COMBOS:
             self._active_device_state()['console'].log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
-        self._active_device_state()['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
-        for a in self._active_device_state()['tap_configs'][tap].actions:
-            self._active_device_state()['serial'].send_line(a.to_serial_line())
-        self._active_device_state()['serial'].send_line("WRITE_MACRO_END")
+        st['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
+        for a in st['tap_configs'][tap].actions:
+            st['serial'].send_line(a.to_serial_line())
+        st['serial'].send_line("WRITE_MACRO_END")
 
     def _write_macro_actions(self, tap: int, actions: List[ActionItem]) -> None:
         # Enforce MAX_COMBOS
@@ -962,13 +963,14 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if len(combos) > MAX_COMBOS:
             self._active_device_state()['console'].log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
-        self._active_device_state()['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
+        st = self._active_device_state()
+        st['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
         for a in actions:
             # Validate token before sending to device
             if a.action_type == 'key' and a.key not in KEY_TOKENS:
                 continue
-            self._active_device_state()['serial'].send_line(a.to_serial_line())
-        self._active_device_state()['serial'].send_line("WRITE_MACRO_END")
+            st['serial'].send_line(a.to_serial_line())
+        st['serial'].send_line("WRITE_MACRO_END")
 
     def _browse_app(self, tap: int) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Выбрать приложение", "", "Все файлы (*)")
@@ -1283,7 +1285,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
     def _on_macro_begin_for(self, st: Dict, tap: int) -> None:
         st['reading_tap'] = tap
         st['tap_configs'][tap].clear()
-        self._refresh_actions_list(tap)
+        self._refresh_actions_list_for(st, tap)
 
     def _on_macro_action_for(self, st: Dict, line: str) -> None:
         try:
@@ -1296,7 +1298,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 ms = int(parts[2])
                 target_tap = st.get('reading_tap') or self.current_tap
                 st['tap_configs'][target_tap].actions.append(ActionItem('delay', ms=ms))
-            self._refresh_actions_list(st.get('reading_tap') or self.current_tap)
+            self._refresh_actions_list_for(st, st.get('reading_tap') or self.current_tap)
         except Exception:
             pass
 
@@ -1304,6 +1306,16 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         st['console'].log(f"Считан макрос для тапа {tap}")
         st['reading_tap'] = None
         self.lbl_op.setText("ОК")
+
+    def _refresh_actions_list_for(self, st: Dict, tap: int) -> None:
+        try:
+            page = st['pages'][tap]
+            lst = page.lst_actions  # type: ignore[attr-defined]
+            lst.clear()
+            for a in st['tap_configs'][tap].actions:
+                lst.addItem(a.to_display())
+        except Exception:
+            pass
 
     def _on_mode_for(self, st: Dict, tap: int, mode: int) -> None:
         cfg = st['tap_configs'][tap]
