@@ -266,6 +266,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         file_menu.addAction(act_export)
         act_import.triggered.connect(self._import_from_json)
         act_export.triggered.connect(self._export_to_json)
+        # Edit menu for device actions
+        edit_menu = menubar.addMenu("Правка")
+        act_bind_id = QtWidgets.QAction("Закрепить ID...", self)
+        edit_menu.addAction(act_bind_id)
+        act_bind_id.triggered.connect(self._bind_device_id)
         # Devices handled via tabs with '+'
         settings_menu = menubar.addMenu("Настройки")
         act_settings = QtWidgets.QAction("Открыть настройки", self)
@@ -289,7 +294,14 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.device_tabs.currentChanged.connect(self._on_device_tab_changed)
         self.device_tabs.setTabsClosable(True)
         self.device_tabs.tabCloseRequested.connect(self._close_device_tab)
-        self._add_device_tab()  # create first device tab
+        # Load saved devices count (1..4)
+        try:
+            saved_count = int(self.settings.value("device_count", 1))
+        except Exception:
+            saved_count = 1
+        saved_count = max(1, min(4, saved_count))
+        for _ in range(saved_count):
+            self._add_device_tab()
         self._add_plus_tab()
 
     def _add_device_tab(self, device_id: Optional[str] = None) -> None:
@@ -348,6 +360,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'console': console,
             'connected': False,
             'current_port': None,
+            'preferred_port': None,
             # Dedicated serial for this device tab
             'serial': SerialManager(),
             # Programming/macro read state per device
@@ -358,26 +371,32 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'ports_timer': None,
         }
         # Configure per-device serial
-        dev_state['serial'].on_log = lambda text, st=dev_state: st['console'].log(text)
-        dev_state['serial'].on_connected = lambda port, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_connected_for(st, port))
-        dev_state['serial'].on_disconnected = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_disconnected_for(st))
-        dev_state['serial'].on_tap = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_tap_for(st, tap))
-        dev_state['serial'].on_app_trigger = lambda tap, code, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_app_trigger_for(st, tap, code))
-        dev_state['serial'].on_macro_begin = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_begin_for(st, tap))
-        dev_state['serial'].on_macro_action = lambda line, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_action_for(st, line))
-        dev_state['serial'].on_macro_end = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_end_for(st, tap))
-        dev_state['serial'].on_mode = lambda tap, mode, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_mode_for(st, tap, mode))
-        dev_state['serial'].on_ok = lambda st=dev_state: st['console'].log("OK")
-        dev_state['serial'].on_err = lambda reason, st=dev_state: st['console'].log(f"ERR: {reason}")
-        dev_state['serial'].on_prog_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_req_for(st))
-        dev_state['serial'].on_prog_exit_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_exit_req_for(st))
-        dev_state['serial'].on_device_id = lambda devid, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_device_id_for(st, devid))
+        sm = dev_state['serial']
+        # Apply device type preference
+        try:
+            sm.set_device_preference(self._device_preference)
+        except Exception:
+            pass
+        sm.on_log = lambda text, st=dev_state: st['console'].log(text)
+        sm.on_connected = lambda port, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_connected_for(st, port))
+        sm.on_disconnected = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_disconnected_for(st))
+        sm.on_tap = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_tap_for(st, tap))
+        sm.on_app_trigger = lambda tap, code, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_app_trigger_for(st, tap, code))
+        sm.on_macro_begin = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_begin_for(st, tap))
+        sm.on_macro_action = lambda line, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_action_for(st, line))
+        sm.on_macro_end = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_end_for(st, tap))
+        sm.on_mode = lambda tap, mode, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_mode_for(st, tap, mode))
+        sm.on_ok = lambda st=dev_state: st['console'].log("OK")
+        sm.on_err = lambda reason, st=dev_state: st['console'].log(f"ERR: {reason}")
+        sm.on_prog_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_req_for(st))
+        sm.on_prog_exit_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_exit_req_for(st))
+        sm.on_device_id = lambda devid, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_device_id_for(st, devid))
         # Wire per-device COM actions
         btn_refresh.clicked.connect(lambda _=False, st=dev_state: self._refresh_ports_for(st))
         btn_connect.clicked.connect(lambda _=False, st=dev_state: self._toggle_connection_for(st))
         chk_autorun.toggled.connect(lambda checked, s=dev_state: s['serial'].set_autoscan_enabled(checked))
         self.device_states.append(dev_state)
-        # Insert before '+' if exists
+        # Insert before '+' if exists and set saved properties
         idx = self.device_tabs.count()
         plus_idx = self._plus_tab_index()
         if plus_idx is None:
@@ -385,6 +404,23 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         else:
             self.device_tabs.insertTab(plus_idx, container, self._title_for_device(device_id, len(self.device_states)))
         self.device_tabs.setCurrentIndex(self.device_tabs.indexOf(container))
+        # Load saved id/port/autorun for this tab index
+        tab_index = len(self.device_states)
+        saved_id = self.settings.value(f"device{tab_index}/id", "", type=str)
+        if saved_id:
+            dev_state['id'] = saved_id
+            iidx = self.device_tabs.indexOf(container)
+            if iidx >= 0:
+                self.device_tabs.setTabText(iidx, self._title_for_device(saved_id, iidx + 1))
+            try:
+                dev_state['serial'].set_desired_device_id(saved_id)
+            except Exception:
+                pass
+        saved_port = self.settings.value(f"device{tab_index}/port", "", type=str)
+        if saved_port:
+            dev_state['preferred_port'] = saved_port
+        saved_autorun = self.settings.value(f"device{tab_index}/autorun", True, type=bool)
+        dev_state['chk_autorun'].setChecked(bool(saved_autorun))
         # Initial port list and start serial reader for this device
         self._refresh_ports_for(dev_state)
         dev_state['serial'].start()
