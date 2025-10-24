@@ -6,6 +6,10 @@
 
 // ---------------- Configuration ----------------
 //#define CLEAR_EEPROM  // Uncomment to reset EEPROM to defaults on boot
+// Assign a unique ID per physical button to distinguish devices in GUI logs
+#ifndef DEVICE_ID
+#define DEVICE_ID 1
+#endif
 
 #include <Arduino.h>
 #include <Keyboard.h>
@@ -479,6 +483,17 @@ void handleLine(const String &l) {
     digitalWrite(PIN_LED, LOW);
     return;
   }
+  if (l.startsWith("SET_ID:")) {
+    String nid = l.substring(7);
+    nid.trim();
+    // Store as two EEPROM bytes (low/high) simple numeric ID 1..65535
+    int idVal = nid.toInt();
+    if (idVal <= 0) idVal = DEVICE_ID;
+    EEPROM.update(510, idVal & 0xFF);
+    EEPROM.update(511, (idVal >> 8) & 0xFF);
+    sendLine("OK");
+    return;
+  }
 }
 
 // ---------------- Button handling ----------------
@@ -556,6 +571,11 @@ void setup() {
 #endif
 
   sendLine("HELLO_ARDUINO");
+  // Report unique device ID for host identification
+  // Read override ID from EEPROM if present (simple scheme)
+  uint16_t eid = (uint16_t)EEPROM.read(510) | ((uint16_t)EEPROM.read(511) << 8);
+  uint16_t rid = (eid == 0xFFFF || eid == 0x0000) ? DEVICE_ID : eid;
+  sendLine(String("DEVICE_ID:") + rid);
 }
 
 void loop() {
