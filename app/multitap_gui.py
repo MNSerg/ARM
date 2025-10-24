@@ -1042,8 +1042,13 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self.settings.sync()
             # Apply immediately
             self._apply_windows_autostart(enabled)
-            self.serial.set_device_preference(pref)
-            self._refresh_ports()
+            # Apply to all device SerialManagers and refresh their port lists
+            for st in self.device_states:
+                try:
+                    st['serial'].set_device_preference(pref)
+                    self._refresh_ports_for(st)
+                except Exception:
+                    pass
             # Update delay mode combos on all device tabs to reflect the new default immediately
             use_real = chk_real_delays_default.isChecked()
             for st in self.device_states:
@@ -1344,7 +1349,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             if st.get('id') == device_id:
                 if self.device_tabs.currentIndex() != i:
                     self.device_tabs.setCurrentIndex(i)
-                self.serial.set_desired_device_id(device_id)
+                st['serial'].set_desired_device_id(device_id)
                 return
         # Assign to active if empty
         st = self._active_device_state()
@@ -1352,14 +1357,19 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         if not st.get('id'):
             st['id'] = device_id
             self.device_tabs.setTabText(active_index, self._title_for_device(device_id, active_index + 1))
-            self.serial.set_desired_device_id(device_id)
+            st['serial'].set_desired_device_id(device_id)
             return
         # Otherwise, create a new device tab
         self._add_device_tab(device_id=device_id)
         # Rename just-created active tab
         idx = self.device_tabs.currentIndex()
         self.device_tabs.setTabText(idx, self._title_for_device(device_id, idx + 1))
-        self.serial.set_desired_device_id(device_id)
+        # Set desired ID on current device's serial
+        st = self._active_device_state()
+        try:
+            st['serial'].set_desired_device_id(device_id)
+        except Exception:
+            pass
 
     # --------------------- Settings ---------------------
     def _load_settings(self) -> None:
