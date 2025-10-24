@@ -328,7 +328,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         btn_toggle_console.setChecked(False)
         btn_toggle_console.toggled.connect(lambda checked, c=console, b=None: (c.setVisible(checked), btn_toggle_console.setText("Скрыть консоль" if checked else "Показать консоль")))
         btn_clear_console = QtWidgets.QPushButton("Очистить консоль")
-        btn_clear_console.clicked.connect(lambda c=console: c.setPlainText(""))
+        btn_clear_console.clicked.connect(lambda _=False, c=console: c.setPlainText(""))
         console_bar.addWidget(btn_toggle_console)
         console_bar.addWidget(btn_clear_console)
         v.addLayout(console_bar)
@@ -355,6 +355,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'prog_exit_pending': False,
             'prog_buffer': None,
             'prog_source_tab': None,
+            'ports_timer': None,
         }
         # Configure per-device serial
         dev_state['serial'].on_log = lambda text, st=dev_state: st['console'].log(text)
@@ -366,10 +367,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         dev_state['serial'].on_macro_action = lambda line, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_action_for(st, line))
         dev_state['serial'].on_macro_end = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_end_for(st, tap))
         dev_state['serial'].on_mode = lambda tap, mode, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_mode_for(st, tap, mode))
-        dev_state['serial'].on_ok = self.sig_ok.emit
-        dev_state['serial'].on_err = self.sig_err.emit
+        dev_state['serial'].on_ok = lambda st=dev_state: st['console'].log("OK")
+        dev_state['serial'].on_err = lambda reason, st=dev_state: st['console'].log(f"ERR: {reason}")
         dev_state['serial'].on_prog_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_req_for(st))
         dev_state['serial'].on_prog_exit_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_exit_req_for(st))
+        dev_state['serial'].on_device_id = lambda devid, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_device_id_for(st, devid))
         # Wire per-device COM actions
         btn_refresh.clicked.connect(lambda _=False, st=dev_state: self._refresh_ports_for(st))
         btn_connect.clicked.connect(lambda _=False, st=dev_state: self._toggle_connection_for(st))
@@ -386,6 +388,14 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         # Initial port list and start serial reader for this device
         self._refresh_ports_for(dev_state)
         dev_state['serial'].start()
+        # Setup periodic ports refresh under autorun
+        t = QtCore.QTimer(container)
+        t.setInterval(200)
+        t.timeout.connect(lambda st=dev_state: (not st['serial'].is_connected()) and self._refresh_ports_for(st))
+        dev_state['ports_timer'] = t
+        chk_autorun.toggled.connect(lambda checked, st=dev_state: (st['ports_timer'].start() if checked else st['ports_timer'].stop()))
+        if chk_autorun.isChecked():
+            t.start()
 
     def _title_for_device(self, device_id: Optional[str], ordinal: int) -> str:
         return f"Кнопка {device_id}" if device_id else f"Кнопка №{ordinal}"
@@ -688,7 +698,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         pass
 
     def _on_app_trigger(self, tap: int, code: str) -> None:
-        self.console.log(f"APP_TRIGGER tap={tap} code={code}")
+        self._active_device_state()['console'].log(f"APP_TRIGGER tap={tap} code={code}")
         path = self._active_device_state()['tap_configs'].get(tap, TapConfig()).app_path
         if path and os.path.exists(path):
             try:
@@ -709,7 +719,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         page = self._active_device_state()['pages'][tap]
         page.rb_macro.setChecked(mode == TapConfig.MODE_MACRO)  # type: ignore[attr-defined]
         page.rb_app.setChecked(mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
-        self.console.log(f"Режим тапа {tap}: {'Макрос' if mode==1 else 'Приложение'}")
+        self._active_device_state()['console'].log(f"Режим тапа {tap}: {'Макрос' if mode==1 else 'Приложение'}")
         self.lbl_op.setText("ОК")
 
     def _on_macro_begin(self, tap: int) -> None:
@@ -734,12 +744,12 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             pass
 
     def _on_macro_end(self, tap: int) -> None:
-        self.console.log(f"Считан макрос для тапа {tap}")
+        self._active_device_state()['console'].log(f"Считан макрос для тапа {tap}")
         self._reading_tap = None
         self.lbl_op.setText("ОК")
 
     def _on_prog_req(self) -> None:
-        self.console.log("Вход в режим программирования запрошен")
+        self._active_device_state()['console'].log("Вход в режим программирования запрошен")
         # Всегда подтверждаем вход в режим программирования, чтобы LED загорелся
         self._active_device_state()['serial'].send_line("PROG_ACK")
         # Setting: when enabled, autoprogram only if Autorun is checked; otherwise always autoprogram
@@ -754,7 +764,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self._prog_exit_pending = True
 
     def _on_prog_exit_req(self) -> None:
-        self.console.log("Выход из режима программирования запрошен")
+        self._active_device_state()['console'].log("Выход из режима программирования запрошен")
         self._active_device_state()['serial'].send_line("PROG_EXIT_ACK")
         if self.recorder is not None:
             # Stop recording
@@ -787,7 +797,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _start_record(self, tap: int) -> None:
         if self.recorder is not None:
-            self.console.log("Запись уже активна")
+            self._active_device_state()['console'].log("Запись уже активна")
             return
         # Clear list per spec
         cfg = self._active_device_state()['tap_configs'][tap]
@@ -818,9 +828,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             self._refresh_actions_list(tap)
 
         rec.on_action = on_action
-        rec.on_stop = lambda: (self.console.log("Запись завершена"), self.lbl_rec.setText("Запись: выкл"))
+        rec.on_stop = lambda: (self._active_device_state()['console'].log("Запись завершена"), self.lbl_rec.setText("Запись: выкл"))
         rec.start()
-        self.console.log("Запись начата")
+        self._active_device_state()['console'].log("Запись начата")
         self.lbl_rec.setText("Запись: вкл")
 
     def _stop_record(self, tap: int) -> None:
@@ -939,7 +949,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         # Enforce MAX_COMBOS
         combos = [a for a in self._active_device_state()['tap_configs'][tap].actions if a.action_type == 'key']
         if len(combos) > MAX_COMBOS:
-            self.console.log(f"Ошибка: более {MAX_COMBOS} комбинаций")
+            self._active_device_state()['console'].log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
         self._active_device_state()['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
         for a in self._active_device_state()['tap_configs'][tap].actions:
@@ -950,7 +960,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         # Enforce MAX_COMBOS
         combos = [a for a in actions if a.action_type == 'key']
         if len(combos) > MAX_COMBOS:
-            self.console.log(f"Ошибка: более {MAX_COMBOS} комбинаций")
+            self._active_device_state()['console'].log(f"Ошибка: более {MAX_COMBOS} комбинаций")
             return
         self._active_device_state()['serial'].send_line(f"WRITE_MACRO_BEGIN:{tap}")
         for a in actions:
@@ -1081,9 +1091,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            self.console.log("Экспорт: OK")
+            self._active_device_state()['console'].log("Экспорт: OK")
         except Exception as e:
-            self.console.log(f"Экспорт ошибка: {e}")
+            self._active_device_state()['console'].log(f"Экспорт ошибка: {e}")
 
     def _import_from_json(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Импорт настроек", "", "JSON (*.json)")
@@ -1119,9 +1129,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                 page = self._active_device_state()['pages'][tap]
                 page.ed_app_path.setText(cfg.app_path)  # type: ignore[attr-defined]
                 self._refresh_actions_list(tap)
-            self.console.log("Импорт: OK")
+            self._active_device_state()['console'].log("Импорт: OK")
         except Exception as e:
-            self.console.log(f"Импорт ошибка: {e}")
+            self._active_device_state()['console'].log(f"Импорт ошибка: {e}")
 
     def _apply_windows_autostart(self, enable: bool) -> None:
         if sys.platform.startswith('win'):
@@ -1140,7 +1150,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                         except FileNotFoundError:
                             pass
             except Exception as e:
-                self.console.log(f"Не удалось обновить автозапуск: {e}")
+                self._active_device_state()['console'].log(f"Не удалось обновить автозапуск: {e}")
 
     def _add_key(self, tap: int) -> None:
         # Add a new key action interactively
@@ -1175,15 +1185,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         self.btn_toggle_console.setText("Скрыть консоль" if checked else "Показать консоль")
 
     def _on_ok(self) -> None:
-        self.console.log("OK")
+        self._active_device_state()['console'].log("OK")
         self.lbl_op.setText("ОК")
 
     def _on_err(self, reason: str) -> None:
-        self.console.log(f"ERR: {reason}")
+        self._active_device_state()['console'].log(f"ERR: {reason}")
         self.lbl_op.setText("Ошибка")
 
     def _on_tap(self, tap: int) -> None:
-        self.console.log(f"Тап: {tap}")
+        self._active_device_state()['console'].log(f"Тап: {tap}")
         # When exiting programming mode, remember which tap to write macro to
         if getattr(self, '_prog_exit_pending', False):
             if tap in (1, 2, 3, 4):
@@ -1198,7 +1208,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         # If any tab has this ID already, disconnect and ignore this stream to avoid conflicts
         for other in self.device_states:
             if other is not st and other.get('id') == device_id:
-                self.console.log(f"ID уже закреплён за другой вкладкой: {device_id}")
+                st['console'].log(f"ID уже закреплён за другой вкладкой: {device_id}")
                 return
         # If current tab has no ID, assign it
         if not st.get('id'):
@@ -1219,6 +1229,15 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         st['connected'] = True
         st['current_port'] = port_name
         st['btn_connect'].setText("Отключить")
+        # Update COM selector to current port
+        try:
+            cb: QtWidgets.QComboBox = st['cb_ports']
+            for i in range(cb.count()):
+                if cb.itemData(i) == port_name:
+                    cb.setCurrentIndex(i)
+                    break
+        except Exception:
+            pass
         # Apply GUI-configured modes to device
         for tap in (1, 2, 3, 4):
             mode = st['tap_configs'][tap].mode
@@ -1228,20 +1247,21 @@ class MultiTapWindow(QtWidgets.QMainWindow):
 
     def _on_disconnected_for(self, st: Dict) -> None:
         if st['connected']:
-            self.console.log("Потеря связи")
+            st['console'].log("Потеря связи")
         st['connected'] = False
         st['btn_connect'].setText("Подключить")
+        # Stop autorun scan refresh if disabled
         if self.recorder is not None:
             self._stop_record(self.current_tap)
 
     def _on_tap_for(self, st: Dict, tap: int) -> None:
-        self.console.log(f"Тап: {tap}")
+        st['console'].log(f"Тап: {tap}")
         if st.get('prog_exit_pending'):
             if tap in (1, 2, 3, 4):
                 self.current_tap = tap
 
     def _on_app_trigger_for(self, st: Dict, tap: int, code: str) -> None:
-        self.console.log(f"APP_TRIGGER tap={tap} code={code}")
+        st['console'].log(f"APP_TRIGGER tap={tap} code={code}")
         path = st['tap_configs'].get(tap, TapConfig()).app_path
         if path and os.path.exists(path):
             try:
@@ -1249,11 +1269,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
                     os.startfile(path)  # type: ignore[attr-defined]
                 else:
                     subprocess.Popen([path], start_new_session=True)
-                self.console.log("Запуск приложения: OK")
+                st['console'].log("Запуск приложения: OK")
             except Exception as e:
-                self.console.log(f"Ошибка запуска приложения: {e}")
+                st['console'].log(f"Ошибка запуска приложения: {e}")
         else:
-            self.console.log("Путь к приложению не задан или не существует")
+            st['console'].log("Путь к приложению не задан или не существует")
 
     def _on_macro_begin_for(self, st: Dict, tap: int) -> None:
         st['reading_tap'] = tap
@@ -1276,7 +1296,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             pass
 
     def _on_macro_end_for(self, st: Dict, tap: int) -> None:
-        self.console.log(f"Считан макрос для тапа {tap}")
+        st['console'].log(f"Считан макрос для тапа {tap}")
         st['reading_tap'] = None
         self.lbl_op.setText("ОК")
 
@@ -1286,11 +1306,11 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         page = st['pages'][tap]
         page.rb_macro.setChecked(mode == TapConfig.MODE_MACRO)  # type: ignore[attr-defined]
         page.rb_app.setChecked(mode == TapConfig.MODE_APP)      # type: ignore[attr-defined]
-        self.console.log(f"Режим тапа {tap}: {'Макрос' if mode==1 else 'Приложение'}")
+        st['console'].log(f"Режим тапа {tap}: {'Макрос' if mode==1 else 'Приложение'}")
         self.lbl_op.setText("ОК")
 
     def _on_prog_req_for(self, st: Dict) -> None:
-        self.console.log("Вход в режим программирования запрошен")
+        st['console'].log("Вход в режим программирования запрошен")
         st['serial'].send_line("PROG_ACK")
         requires_autorun = bool(self.settings.value("autoprogram_only_in_autorun", True))
         allow_auto = st['chk_autorun'].isChecked() if requires_autorun else True
@@ -1301,7 +1321,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             st['prog_exit_pending'] = True
 
     def _on_prog_exit_req_for(self, st: Dict) -> None:
-        self.console.log("Выход из режима программирования запрошен")
+        st['console'].log("Выход из режима программирования запрошен")
         st['serial'].send_line("PROG_EXIT_ACK")
         if self.recorder is not None:
             self._stop_record(self.current_tap)
