@@ -318,6 +318,22 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             inner_pages_map[tap] = w
             self._build_tap_page(w, tap)
             inner.addTab(w, title)
+        # Console per device
+        console = Console()
+        console.setMaximumHeight(140)
+        console.setVisible(False)
+        console_bar = QtWidgets.QHBoxLayout()
+        btn_toggle_console = QtWidgets.QPushButton("Показать консоль")
+        btn_toggle_console.setCheckable(True)
+        btn_toggle_console.setChecked(False)
+        btn_toggle_console.toggled.connect(lambda checked, c=console, b=None: (c.setVisible(checked), btn_toggle_console.setText("Скрыть консоль" if checked else "Показать консоль")))
+        btn_clear_console = QtWidgets.QPushButton("Очистить консоль")
+        btn_clear_console.clicked.connect(lambda c=console: c.setPlainText(""))
+        console_bar.addWidget(btn_toggle_console)
+        console_bar.addWidget(btn_clear_console)
+        v.addLayout(console_bar)
+        v.addWidget(console, 1)
+
         # Save device state structure
         dev_state = {
             'id': device_id,
@@ -329,6 +345,7 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'btn_refresh': btn_refresh,
             'btn_connect': btn_connect,
             'chk_autorun': chk_autorun,
+            'console': console,
             'connected': False,
             'current_port': None,
             # Dedicated serial for this device tab
@@ -340,19 +357,19 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             'prog_source_tab': None,
         }
         # Configure per-device serial
-        dev_state['serial'].on_log = self.sig_log.emit
-        dev_state['serial'].on_connected = lambda port, st=dev_state: self._on_connected_for(st, port)
-        dev_state['serial'].on_disconnected = lambda st=dev_state: self._on_disconnected_for(st)
-        dev_state['serial'].on_tap = lambda tap, st=dev_state: self._on_tap_for(st, tap)
-        dev_state['serial'].on_app_trigger = lambda tap, code, st=dev_state: self._on_app_trigger_for(st, tap, code)
-        dev_state['serial'].on_macro_begin = lambda tap, st=dev_state: self._on_macro_begin_for(st, tap)
-        dev_state['serial'].on_macro_action = lambda line, st=dev_state: self._on_macro_action_for(st, line)
-        dev_state['serial'].on_macro_end = lambda tap, st=dev_state: self._on_macro_end_for(st, tap)
-        dev_state['serial'].on_mode = lambda tap, mode, st=dev_state: self._on_mode_for(st, tap, mode)
+        dev_state['serial'].on_log = lambda text, st=dev_state: st['console'].log(text)
+        dev_state['serial'].on_connected = lambda port, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_connected_for(st, port))
+        dev_state['serial'].on_disconnected = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_disconnected_for(st))
+        dev_state['serial'].on_tap = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_tap_for(st, tap))
+        dev_state['serial'].on_app_trigger = lambda tap, code, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_app_trigger_for(st, tap, code))
+        dev_state['serial'].on_macro_begin = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_begin_for(st, tap))
+        dev_state['serial'].on_macro_action = lambda line, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_action_for(st, line))
+        dev_state['serial'].on_macro_end = lambda tap, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_macro_end_for(st, tap))
+        dev_state['serial'].on_mode = lambda tap, mode, st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_mode_for(st, tap, mode))
         dev_state['serial'].on_ok = self.sig_ok.emit
         dev_state['serial'].on_err = self.sig_err.emit
-        dev_state['serial'].on_prog_req = lambda st=dev_state: self._on_prog_req_for(st)
-        dev_state['serial'].on_prog_exit_req = lambda st=dev_state: self._on_prog_exit_req_for(st)
+        dev_state['serial'].on_prog_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_req_for(st))
+        dev_state['serial'].on_prog_exit_req = lambda st=dev_state: QtCore.QTimer.singleShot(0, lambda: self._on_prog_exit_req_for(st))
         # Wire per-device COM actions
         btn_refresh.clicked.connect(lambda _=False, st=dev_state: self._refresh_ports_for(st))
         btn_connect.clicked.connect(lambda _=False, st=dev_state: self._toggle_connection_for(st))
@@ -366,8 +383,9 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         else:
             self.device_tabs.insertTab(plus_idx, container, self._title_for_device(device_id, len(self.device_states)))
         self.device_tabs.setCurrentIndex(self.device_tabs.indexOf(container))
-        # Initial port list
+        # Initial port list and start serial reader for this device
         self._refresh_ports_for(dev_state)
+        dev_state['serial'].start()
 
     def _title_for_device(self, device_id: Optional[str], ordinal: int) -> str:
         return f"Кнопка {device_id}" if device_id else f"Кнопка №{ordinal}"
@@ -391,6 +409,10 @@ class MultiTapWindow(QtWidgets.QMainWindow):
             # Ensure '+' remains last
             self.device_tabs.setCurrentIndex(self.device_tabs.count() - 2)
             return
+        # Update current tap based on inner tab selection for the selected device
+        if 0 <= index < len(self.device_states):
+            inner: QtWidgets.QTabWidget = self.device_states[index]['inner']
+            self.current_tap = inner.currentIndex() + 1
 
     # --------------------- Per-device COM handling ---------------------
     def _refresh_ports_for(self, st: Dict) -> None:
@@ -591,20 +613,8 @@ class MultiTapWindow(QtWidgets.QMainWindow):
         w.rb_app = rb_app      # type: ignore[attr-defined]
 
     def _build_console(self) -> None:
-        # Toggleable console area
-        h = QtWidgets.QHBoxLayout()
-        self._vbox.addLayout(h)
-        self.btn_toggle_console = QtWidgets.QPushButton("Показать консоль")
-        self.btn_toggle_console.setCheckable(True)
-        self.btn_toggle_console.setChecked(False)
-        self.btn_toggle_console.toggled.connect(self._toggle_console)
-        btn_clear = QtWidgets.QPushButton("Очистить консоль")
-        btn_clear.clicked.connect(lambda: self.console.setPlainText(""))
-        h.addWidget(self.btn_toggle_console)
-        h.addWidget(btn_clear)
-        self._vbox.addWidget(self.console, 1)
-        self.console.setMaximumHeight(140)
-        self.console.setVisible(False)
+        # Per-device console is placed inside each device tab container bottom
+        pass
 
     def _build_status_bar(self) -> None:
         bar = QtWidgets.QHBoxLayout()
