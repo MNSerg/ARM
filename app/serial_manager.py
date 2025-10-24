@@ -108,6 +108,7 @@ class SerialManager:
         self._device_id: Optional[str] = None
         self._desired_device_id: Optional[str] = None
         self._port_blacklist: dict[str, float] = {}
+        self._blocked_ports: set[str] = set()
         # Callbacks
         self.on_log: Optional[Callable[[str], None]] = None
         self.on_connected: Optional[Callable[[str], None]] = None
@@ -188,6 +189,9 @@ class SerialManager:
         result: List[tuple[str, str]] = []
         for p in list_ports.comports():
             label = self._classify_port_label(p)
+            # Skip blocked ports from listing for callers that want filtered view
+            if p.device in self._blocked_ports:
+                continue
             result.append((p.device, label))
         return result
 
@@ -297,6 +301,8 @@ class SerialManager:
             if not self._port_matches_preference(p):
                 continue
             if p.device in self._port_blacklist:
+                continue
+            if p.device in self._blocked_ports:
                 continue
             if self.try_connect_port(p.device):
                 return
@@ -453,3 +459,7 @@ class SerialManager:
     def device_id(self) -> Optional[str]:
         """Return last reported device ID for current connection."""
         return self._device_id
+
+    def set_blocked_ports(self, ports: set[str]) -> None:
+        """Ports to avoid during autoscan and listing (managed by GUI)."""
+        self._blocked_ports = set(ports)
