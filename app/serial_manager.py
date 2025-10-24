@@ -53,7 +53,7 @@ from serial.tools import list_ports
 from typing import Callable, Optional, List, Tuple
 
 
-SCAN_INTERVAL_SEC = 0.5
+SCAN_INTERVAL_SEC = 0.2
 BAUDRATE = 115200
 READ_TIMEOUT = 0.1   # seconds
 WRITE_TIMEOUT = 2.5  # seconds (increase to avoid intermittent timeouts)
